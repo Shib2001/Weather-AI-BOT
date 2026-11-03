@@ -1,0 +1,447 @@
+const form = document.querySelector("#weather-form");
+const cityInput = document.querySelector("#city-input");
+const searchButton = document.querySelector("#search-button");
+const listenButton = document.querySelector("#listen-button");
+const statusMessage = document.querySelector("#status-message");
+const weatherPanel = document.querySelector("#weather-panel");
+const cityFacts = document.querySelector("#city-facts");
+const factIcon = document.querySelector("#fact-icon");
+const factCity = document.querySelector("#fact-city");
+const factCurrentIcon = document.querySelector("#fact-current-icon");
+const factCurrent = document.querySelector("#fact-current");
+const factOutlookIcon = document.querySelector("#fact-outlook-icon");
+const factOutlook = document.querySelector("#fact-outlook");
+const factHistoryIcon = document.querySelector("#fact-history-icon");
+const factHistory = document.querySelector("#fact-history");
+const cityFactContent = document.querySelector(".city-fact-content");
+const locationName = document.querySelector("#location-name");
+const localTime = document.querySelector("#local-time");
+const weatherIcon = document.querySelector("#weather-icon");
+const currentTemperature = document.querySelector("#current-temperature");
+const currentCondition = document.querySelector("#current-condition");
+const weatherReport = document.querySelector("#weather-report");
+const weatherDetails = document.querySelector("#weather-details");
+const speakButton = document.querySelector("#speak-button");
+const backgroundSlides = Array.from(document.querySelectorAll(".background-slide"));
+const backgroundImages = Array.from(
+  { length: 5 },
+  (_, index) => `/backgrounds/Weather_bot_${index}.jpg`,
+);
+
+let latestReport = "";
+let latestWeather = null;
+let recognition = null;
+let reportAudio = null;
+let reportAudioUrl = null;
+const cityWeatherFacts = [
+  {
+    city: "Singapore",
+    icon: "🌦️",
+    currentIcon: "🌡️",
+    current: "Typically warm and humid, with clouds and showers possible.",
+    outlookIcon: "🌦️",
+    outlook: "Showers can occur year-round; this climate pattern is not a forecast.",
+    historyIcon: "📚",
+    history: "Long-term conditions are tropical, with rainfall in every season.",
+  },
+  {
+    city: "Cairo",
+    icon: "☀️",
+    currentIcon: "🌤️",
+    current: "Typically dry, with abundant sunshine and very little humidity.",
+    outlookIcon: "🔥",
+    outlook: "Summer is usually much hotter than winter; this is seasonal context, not a forecast.",
+    historyIcon: "📚",
+    history: "Its desert climate has very low rainfall across the year.",
+  },
+  {
+    city: "Reykjavik",
+    icon: "🌬️",
+    currentIcon: "🌥️",
+    current: "Often cool and breezy, with changeable cloud cover.",
+    outlookIcon: "🌦️",
+    outlook: "Conditions vary by season, and passing showers are possible.",
+    historyIcon: "📚",
+    history: "Its maritime climate is shaped by the North Atlantic and frequent winds.",
+  },
+  {
+    city: "Mumbai",
+    icon: "🌧️",
+    currentIcon: "💧",
+    current: "Typically warm and humid, especially during the rainy season.",
+    outlookIcon: "🌧️",
+    outlook: "The summer monsoon is the main rainy period; timing and rainfall vary.",
+    historyIcon: "📚",
+    history: "A large share of the city's yearly rainfall usually comes during monsoon months.",
+  },
+  {
+    city: "London",
+    icon: "🌦️",
+    currentIcon: "🌤️",
+    current: "Often mild, with a mix of cloud, sunshine, and passing rain.",
+    outlookIcon: "🌦️",
+    outlook: "Showers are possible in any season; this describes climate, not upcoming forecast.",
+    historyIcon: "📚",
+    history: "Its maritime climate brings changeable conditions through the year.",
+  },
+];
+
+function startCityFactRotation() {
+  if (
+    !cityFacts ||
+    !factIcon ||
+    !factCity ||
+    !factCurrentIcon ||
+    !factCurrent ||
+    !factOutlookIcon ||
+    !factOutlook ||
+    !factHistoryIcon ||
+    !factHistory ||
+    !cityFactContent
+  ) return;
+
+  let activeFact = 0;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  window.setInterval(() => {
+    if (cityFacts.hidden) return;
+    cityFacts.classList.add("is-changing");
+    window.setTimeout(() => {
+      activeFact = (activeFact + 1) % cityWeatherFacts.length;
+      const fact = cityWeatherFacts[activeFact];
+      factIcon.textContent = fact.icon;
+      factCity.textContent = fact.city;
+      factCurrentIcon.textContent = fact.currentIcon;
+      factCurrent.textContent = fact.current;
+      factOutlookIcon.textContent = fact.outlookIcon;
+      factOutlook.textContent = fact.outlook;
+      factHistoryIcon.textContent = fact.historyIcon;
+      factHistory.textContent = fact.history;
+      cityFacts.classList.remove("is-changing");
+    }, 450);
+  }, 5200);
+}
+
+function startBackgroundSlideshow() {
+  if (backgroundSlides.length !== 2) return;
+
+  const imageCache = backgroundImages.map((source) => {
+    const image = new Image();
+    image.src = source;
+    return image;
+  });
+  let activeLayer = 0;
+  let activeImage = 0;
+
+  const changeBackground = () => {
+    const nextImage = (activeImage + 1) % imageCache.length;
+    const nextLayer = 1 - activeLayer;
+    backgroundSlides[nextLayer].style.backgroundImage =
+      `url("${backgroundImages[nextImage]}")`;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        backgroundSlides[nextLayer].classList.add("background-slide-active");
+        backgroundSlides[activeLayer].classList.remove("background-slide-active");
+        activeLayer = nextLayer;
+        activeImage = nextImage;
+      });
+    });
+  };
+
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    window.setInterval(changeBackground, 2400);
+  }
+}
+
+startBackgroundSlideshow();
+startCityFactRotation();
+
+const SpeechRecognition =
+  window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.lang = navigator.language || "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    listenButton.disabled = true;
+    listenButton.classList.add("listening");
+    showStatus("Listening… say a city name.", "loading");
+  };
+
+  recognition.onresult = (event) => {
+    const city = event.results[0][0].transcript.trim();
+    if (!city) {
+      showStatus("I didn’t catch a city name. Please try again.", "error");
+      return;
+    }
+
+    cityInput.value = city;
+    showStatus(`I heard “${city}”. Checking the weather…`, "loading");
+    form.requestSubmit();
+  };
+
+  recognition.onerror = (event) => {
+    const messages = {
+      "not-allowed": "Microphone access is blocked. Allow it in your browser settings.",
+      "service-not-allowed": "Speech recognition is unavailable in this browser.",
+      "no-speech": "I didn’t hear anything. Please try speaking again.",
+      network: "Speech recognition needs an internet connection.",
+    };
+    if (event.error !== "aborted") {
+      showStatus(messages[event.error] || "Speech recognition failed. Please try again.", "error");
+    }
+  };
+
+  recognition.onend = () => {
+    listenButton.disabled = false;
+    listenButton.classList.remove("listening");
+  };
+} else {
+  listenButton.disabled = true;
+  listenButton.title = "Speech input is not supported in this browser";
+  listenButton.setAttribute("aria-label", "Speech input is not supported in this browser");
+}
+
+function showStatus(message, state = "") {
+  statusMessage.textContent = message;
+  statusMessage.className = `status-message ${state}`.trim();
+}
+
+function formatTemperature(value) {
+  return value == null ? "—" : `${Math.round(value)}°`;
+}
+
+function addDetail(label, value) {
+  const item = document.createElement("div");
+  item.className = "detail-item";
+
+  const title = document.createElement("p");
+  title.className = "detail-label";
+  title.textContent = label;
+
+  const reading = document.createElement("p");
+  reading.className = "detail-value";
+  reading.textContent = value;
+
+  item.append(title, reading);
+  weatherDetails.append(item);
+}
+
+function iconForCondition(condition) {
+  if (/thunder|storm/i.test(condition)) return "ϟ";
+  if (/snow|sleet/i.test(condition)) return "❄";
+  if (/rain|drizzle|shower/i.test(condition)) return "☂";
+  if (/fog/i.test(condition)) return "≋";
+  if (/cloud|overcast/i.test(condition)) return "☁";
+  return "☀";
+}
+
+function renderWeather(weather, report) {
+  if (reportAudio) {
+    reportAudio.pause();
+    reportAudio = null;
+  }
+  if (reportAudioUrl) {
+    URL.revokeObjectURL(reportAudioUrl);
+    reportAudioUrl = null;
+  }
+
+  locationName.textContent = weather.location;
+  localTime.textContent = weather.local_time
+    ? `${weather.period === "tomorrow" ? "Forecast" : "Local time"} · ${weather.period_date || weather.local_time.replace("T", " ")}`
+    : "Current local conditions";
+  weatherIcon.textContent = iconForCondition(weather.condition);
+  currentTemperature.textContent = formatTemperature(weather.temperature_c);
+  currentCondition.textContent = weather.condition;
+  weatherReport.textContent = report;
+  latestReport = report;
+  latestWeather = weather;
+
+  weatherDetails.replaceChildren();
+  const periodLabel = weather.period === "tomorrow" ? "Tomorrow" : "Today";
+  document.querySelector(".details-heading h2").textContent = `${periodLabel}, at a glance`;
+  addDetail("🌡️ Feels like", formatTemperature(weather.feels_like_c));
+  addDetail(`🔺 ${periodLabel}’s high`, formatTemperature(weather.today_high_c));
+  addDetail(`🔻 ${periodLabel}’s low`, formatTemperature(weather.today_low_c));
+  addDetail(
+    "💨 Wind",
+    weather.wind_kmh == null ? "—" : `${Math.round(weather.wind_kmh)} km/h`,
+  );
+  addDetail(
+    "💧 Humidity",
+    weather.humidity_percent == null ? "—" : `${weather.humidity_percent}%`,
+  );
+  addDetail(
+    "🌧️ Precipitation",
+    weather.precipitation_mm == null ? "—" : `${weather.precipitation_mm} mm`,
+  );
+  addDetail(
+    "☔ Rain chance",
+    weather.precipitation_probability_percent == null
+      ? "—"
+      : `${weather.precipitation_probability_percent}%`,
+  );
+  if (weather.rainy_season) {
+    addDetail(
+      "🌿 Typical wet season",
+      weather.rainy_season.is_typically_wet_month ? "Usually yes" : "Usually no",
+    );
+  }
+
+  weatherPanel.hidden = false;
+  cityFacts.hidden = true;
+  speakButton.disabled = false;
+}
+
+listenButton.addEventListener("click", () => {
+  if (!recognition) return;
+  try {
+    recognition.start();
+  } catch (error) {
+    const message = error.name === "InvalidStateError"
+      ? "Speech recognition is already listening."
+      : "Could not start speech recognition. Please try again.";
+    showStatus(message, error.name === "InvalidStateError" ? "loading" : "error");
+  }
+});
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const city = cityInput.value.trim();
+  if (!city) {
+    cityInput.focus();
+    return;
+  }
+
+  searchButton.disabled = true;
+  searchButton.querySelector("span").textContent = "Checking…";
+  weatherPanel.hidden = true;
+  cityFacts.hidden = false;
+  showStatus("Finding the latest conditions…", "loading");
+
+  try {
+    const response = await fetch("/api/weather", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: city }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || data.error || "Could not load weather. Please try again.");
+    }
+
+    renderWeather(data.weather, data.report);
+    showStatus("Here’s a little clarity for your day. Astra is preparing your spoken report…");
+    void speakWeatherReport(true);
+  } catch (error) {
+    showStatus(error.message || "Something went wrong. Please try again.", "error");
+  } finally {
+    searchButton.disabled = false;
+    searchButton.querySelector("span").textContent = "Find weather";
+  }
+});
+
+speakButton.addEventListener("click", () => {
+  void speakWeatherReport();
+});
+
+function greetingForWeather(weather) {
+  const localHour = Number(weather.local_time?.match(/T(\d{2}):/)?.[1]);
+  const hour = Number.isFinite(localHour) ? localHour : new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function speakInBrowser(text) {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+    return false;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = navigator.language || "en-US";
+  utterance.onstart = () => {
+    speakButton.querySelector("span").textContent = "Speaking…";
+    showStatus("Astra is speaking your weather report.", "loading");
+  };
+  utterance.onend = () => {
+    speakButton.disabled = false;
+    speakButton.querySelector("span").textContent = "Listen to report";
+  };
+  utterance.onerror = () => {
+    speakButton.disabled = false;
+    speakButton.querySelector("span").textContent = "Listen to report";
+    showStatus("Your browser could not play Astra’s voice. Try “Listen to report” again.", "error");
+  };
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+async function speakWeatherReport(automatic = false) {
+  if (!latestReport || !latestWeather) {
+    showStatus("There is no weather report to read aloud yet.", "error");
+    return;
+  }
+
+  const cityName = latestWeather.location.split(",")[0].trim();
+  const spokenReport =
+    `${greetingForWeather(latestWeather)}, I am your AI assistant Astra. ` +
+    `The weather report for ${cityName} is: ${latestReport} Enjoy, have a great time.`;
+
+  speakButton.disabled = true;
+  speakButton.querySelector("span").textContent = "Preparing voice…";
+  if (!automatic) showStatus("Astra is preparing your weather report…", "loading");
+
+  try {
+    const response = await fetch("/api/speech", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: spokenReport }),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Could not create speech. Please try again.");
+    }
+
+    if (reportAudio) {
+      reportAudio.pause();
+      URL.revokeObjectURL(reportAudioUrl);
+    }
+    reportAudioUrl = URL.createObjectURL(await response.blob());
+    reportAudio = new Audio(reportAudioUrl);
+    reportAudio.addEventListener("ended", () => {
+      URL.revokeObjectURL(reportAudioUrl);
+      reportAudioUrl = null;
+      reportAudio = null;
+      speakButton.disabled = false;
+      speakButton.querySelector("span").textContent = "Listen to report";
+    }, { once: true });
+    await reportAudio.play();
+    speakButton.querySelector("span").textContent = "Speaking…";
+    showStatus("Astra is speaking your weather report.", "loading");
+  } catch (error) {
+    const message = error.message || "Could not play the weather report.";
+    if (speakInBrowser(spokenReport)) {
+      showStatus("Using your browser’s voice for Astra’s report.", "loading");
+      return;
+    }
+    showStatus(
+      automatic
+        ? `Weather report loaded, but Astra’s voice could not start: ${message} Use “Listen to report” to try again.`
+        : message,
+      "error",
+    );
+    speakButton.disabled = false;
+    speakButton.querySelector("span").textContent = "Listen to report";
+    if (reportAudioUrl) {
+      URL.revokeObjectURL(reportAudioUrl);
+      reportAudioUrl = null;
+    }
+    reportAudio = null;
+  }
+}

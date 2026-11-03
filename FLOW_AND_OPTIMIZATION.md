@@ -1,0 +1,300 @@
+# Weather Bot: How It Works
+
+This guide follows one request from the moment you start the app until you see
+or hear the weather report. It also explains what the project does **not** have
+yet, and gives a practical path for adding caching and databases later.
+
+## 1. Start the app
+
+Open PowerShell in the repository folder and run:
+
+```powershell
+cd Weather_bot
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Open <http://127.0.0.1:8000> in your browser. The FastAPI server is defined in
+[`main.py`](./main.py). It reads the repository-root `.env` file when it starts.
+The OpenRouter key should be set as `OPEN_ROUTER=...`. The LLM model,
+speech model, voice, host, and port can also be configured there.
+
+The browser page consists of:
+
+- [`index.html`](./index.html): page structure and controls.
+- [`style.css`](./style.css): appearance and responsive layout.
+- [`script.js`](./script.js): browser behavior, speech recognition, and API calls.
+- `Weather_bot_0.jpg` through `Weather_bot_4.jpg`: full-color background images
+  that crossfade every 2.4 seconds behind the interface.
+
+The main view places the weather question and results side by side inside one
+shared panel. The columns stretch to the same height; on narrow screens they
+stack vertically. Before a search, the results area cycles through static
+sample-city information about typical conditions, seasonal patterns, and climate
+history. These examples are not live conditions, a forecast, or a record-high/
+low database. After a successful search, it displays the requested weather
+report and measurements.
+
+FastAPI serves these files and the API from the same origin. Its automatically
+generated API documentation is at <http://127.0.0.1:8000/docs>.
+
+## 2. Text search: end-to-end flow
+
+For example, the user types:
+
+> What is the weather for Noida today?
+
+### Step 1: The browser sends the question
+
+The form submit handler in [`script.js`](./script.js) sends a JSON request:
+
+```http
+POST /api/weather
+Content-Type: application/json
+
+{"query":"What is the weather for Noida today?"}
+```
+
+The browser does **not** call Open-Meteo or OpenRouter directly. Those requests
+are made by the backend, so the OpenRouter key stays on the server.
+
+### Step 2: FastAPI validates the request
+
+The `/api/weather` endpoint in [`main.py`](./main.py) validates the JSON using
+the `WeatherRequest` Pydantic model. It accepts a natural-language `query`; the
+older `city` field is also still accepted for compatibility.
+
+Invalid or missing input is rejected with a validation response (usually HTTP
+422). The endpoint then calls `fetch_weather(query)`.
+
+### Step 3: The backend extracts the place and requested day
+
+`parse_weather_question()` removes common question wording and identifies
+whether the user asked about today, tomorrow, or a rainy/monsoon season.
+
+Examples:
+
+| User's wording | Place extracted | Requested data |
+|---|---|---|
+| `What is the weather for Noida today?` | Noida | Current conditions and today's high/low |
+| `How is the weather in Lisbon tomorrow?` | Lisbon | Tomorrow's forecast |
+| `Is rainy season going on in Kerala?` | Kerala | Current conditions plus historical rainfall context |
+
+Kashmir is represented using Srinagar as a regional reference point. Kerala is
+represented by a central point in the state. Regional weather varies, so these
+are estimates rather than reports for every place in the region.
+
+### Step 4: The backend gets weather data from Open-Meteo
+
+For ordinary city names, `fetch_weather()` makes these server-side requests:
+
+1. **Geocoding** finds a place name and its latitude/longitude:
+   `https://geocoding-api.open-meteo.com/v1/search`
+2. **Forecast** uses those coordinates to get current and daily measurements:
+   `https://api.open-meteo.com/v1/forecast`
+
+For rainy-season questions, it also requests historical daily precipitation:
+
+3. **Historical archive**:
+   `https://archive-api.open-meteo.com/v1/archive`
+
+The backend converts the weather code to a readable condition and builds a
+weather-data object containing the location, date, condition, temperatures,
+precipitation, and other available measurements.
+
+### Step 5: OpenRouter writes the text report (TTT)
+
+`create_weather_report()` sends the question and verified weather-data object
+to OpenRouter's chat-completions API:
+
+```text
+POST https://openrouter.ai/api/v1/chat/completions
+```
+
+The system prompt tells the model to answer only weather questions, use the
+provided measurements, handle today/tomorrow/season questions appropriately,
+and return a short, gentle answer rather than its analysis.
+
+The backend also disables reasoning output and runs `clean_weather_report()` on
+the model's answer so an analysis block is not shown as the weather report.
+
+If OpenRouter returns no usable text, `create_fallback_report()` builds a
+simple report directly from the weather measurements instead. That avoids
+failing the weather endpoint just because the model returned an empty answer.
+
+### Step 6: The browser displays the result
+
+The backend responds with JSON similar to:
+
+```json
+{
+  "weather": {
+    "location": "Noida, Uttar Pradesh, India",
+    "condition": "clear sky",
+    "temperature_c": 25.5
+  },
+  "report": "Today in Noida, it is clear..."
+}
+```
+
+The response contains more weather fields than this shortened example.
+`script.js` puts the report in the report card and the measurements in the
+weather-detail cards. The frontend uses text content, not HTML from the model.
+
+## 3. Voice search: STT → weather → TTT → TTS
+
+The microphone button uses the browser's Web Speech
+`SpeechRecognition`/`webkitSpeechRecognition` API.
+
+1. **STT — speech to text:** The browser listens to the user and transcribes the
+   spoken question. For example, “What's the weather in Lisbon tomorrow?”
+2. **Same weather request:** The transcript is put into the search box and the
+   normal form submit runs. It sends the transcript to `POST /api/weather`.
+3. **Weather lookup:** The backend extracts the place/date and calls Open-Meteo,
+   just as it does for typed text.
+4. **TTT — text to text:** OpenRouter creates the report, or the backend uses its
+   data-based fallback.
+5. **TTS — text to speech:** The user clicks **Listen to report**. The browser
+   sends the displayed report text to `POST /api/speech`.
+6. The FastAPI speech endpoint sends the text to OpenRouter's TTS API:
+   `https://openrouter.ai/api/v1/audio/speech`
+7. With the default HeyGen model, the backend requests PCM audio, wraps it in a
+   WAV container, and returns it as `audio/wav`. The browser plays the returned
+   audio.
+
+So the microphone performs **STT in the browser**, not in FastAPI. The weather
+lookup and report are performed on the backend. TTS happens only after the user
+presses the listen button; it is not automatically played after every search.
+Speech recognition availability and microphone permissions depend on the
+browser.
+
+## 4. What the HTTP status codes mean
+
+- **200:** The endpoint succeeded.
+- **422:** FastAPI rejected invalid input, or the requested place could not be
+  found.
+- **502:** An upstream service such as Open-Meteo or OpenRouter failed or
+  returned unusable data.
+- **503:** The OpenRouter key is missing or still has the example placeholder.
+
+The weather and speech endpoints are different:
+
+```text
+POST /api/weather  -> JSON weather measurements and text report
+POST /api/speech   -> audio bytes for the supplied report text
+```
+
+Opening either URL in a browser address bar sends a GET request, not the
+required POST. Use the page or the **Try it out** controls in `/docs`.
+
+## 5. What is currently stored?
+
+The current Weather Bot does **not** have a database, vector database, or Redis
+cache. It fetches weather and historical data on each request. The OpenRouter
+key is read from `.env`; there is no user account or search-history storage.
+
+## 6. A practical optimization roadmap
+
+### First: add Redis caching
+
+Redis is the best first addition for repeated questions because weather lookups
+and AI/TTS requests happen repeatedly for the same place and conditions.
+
+Use separate cache entries for separate kinds of data:
+
+| Cache entry | Suggested key | Example lifetime |
+|---|---|---|
+| Geocoding result | `geo:v1:<normalized-place>` | 7–30 days |
+| Current weather | `weather:current:v1:<latitude>:<longitude>` | 5–10 minutes |
+| Daily forecast | `weather:daily:v1:<latitude>:<longitude>:<date>` | 30–60 minutes |
+| Historical rainfall normals | `weather:season:v1:<latitude>:<longitude>` | 30–90 days |
+| Generated report | `report:v1:<model>:<weather-data-hash>` | 10–30 minutes |
+| Generated speech (optional) | `speech:v1:<model>:<voice>:<text-hash>` | Short; only if reuse justifies storage |
+
+Normalize place names before keying (trim spaces, collapse repeated spaces, and
+case-fold). For forecast/report keys, include the coordinates, requested date,
+and relevant weather fields. For report keys, also include the model and a
+prompt/version string. This avoids returning a stale answer after weather data
+or prompt behavior changes.
+
+A typical request flow with Redis would be:
+
+1. Normalize the location and check Redis for its geocoding result.
+2. Check Redis for the current/forecast data. On a miss, call Open-Meteo and
+   cache the result with a short expiry.
+3. Build a stable hash from the normalized question intent and the weather
+   fields used in the response. Check Redis for a generated report.
+4. On a report-cache miss, call OpenRouter, clean the response, and cache it.
+5. If the user asks for speech, check an optional audio cache. Otherwise call
+   TTS and return the audio.
+
+The weather data should have its own cache entry; do not cache only the final
+LLM response. That way the application can refresh live conditions while still
+avoiding duplicate report-generation calls when the underlying measurements
+have not changed.
+
+Use a Redis key version such as `v1` so cache formats can be changed safely.
+Choose TTLs based on how quickly the data becomes stale. Cache misses must
+continue to work if Redis is unavailable, and logs should make cache failures
+visible. Do not put API keys or personal information in cache keys.
+
+To add this, install a Redis Python client (for example `redis`), run a Redis
+server (locally or a managed Redis service), and put its URL in an environment
+variable such as `REDIS_URL`. Add a small cache module with `get_json()` and
+`set_json()` helpers, then call those helpers around the existing geocoding,
+forecast, history, and report functions. Keep the existing provider functions as
+the cache-miss path.
+
+### Second: use a regular database for application records
+
+A **relational database** stores structured records and is useful when the app
+needs user accounts, saved locations, preferences, request history, usage
+tracking, or administrative reports.
+
+- **SQLite:** simplest for local development or a single-user prototype.
+- **PostgreSQL:** a good production default for multiple users and concurrent
+  requests.
+
+Possible tables later:
+
+- `users` and `user_preferences` (only if accounts are added).
+- `saved_locations`.
+- `weather_requests` with normalized location, coordinates, requested date,
+  provider, and timestamp.
+- `weather_snapshots` if historical results need to be retained.
+
+Redis is a fast, expiring cache; PostgreSQL/SQLite is durable application data.
+They solve different problems. Avoid saving every request forever unless the
+product needs that history, and define retention rules before storing user data.
+
+### Third: only add a vector database if there is searchable text knowledge
+
+A vector database is **not needed** to answer current weather questions. Live
+temperature and precipitation are numeric API results; get them from the
+weather API and cache them in Redis.
+
+A vector store becomes useful if the bot must search a collection of text
+documents, such as official climate guides, local severe-weather instructions,
+or a curated knowledge base. In that case:
+
+1. Collect and verify source documents.
+2. Split the text into small passages and attach source/date/region metadata.
+3. Create embeddings and store each passage in a vector index.
+4. For a relevant question, retrieve matching passages and cite their sources
+   in the model prompt.
+5. Keep live forecast values coming from Open-Meteo; do not replace them with
+   retrieved document text.
+
+Start without a vector database. Add one only when there is a specific
+document-search requirement.
+
+## Suggested order
+
+1. Keep the current FastAPI + Open-Meteo + OpenRouter implementation working.
+2. Add Redis caching for geocoding, forecasts, and historical rainfall.
+3. Add report caching keyed by the weather-data hash, model, and prompt version.
+4. Add PostgreSQL only when saved users/locations/history are actually needed.
+5. Add a vector database only when the bot needs to search trusted documents.
+
+This order improves speed and cost without adding databases the current app
+does not yet need.

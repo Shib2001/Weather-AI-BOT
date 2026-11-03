@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#eaf4fb">
+    <title>Weatherly — A gentler weather report</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/script.js" defer></script>
+  </head>
+  <body>
+    <div class="background-slideshow" aria-hidden="true">
+      <div class="background-slide background-slide-active"></div>
+      <div class="background-slide"></div>
+    </div>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Weatherly home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M9.3 22.8h14.2a5.2 5.2 0 0 0 .4-10.4A8 8 0 0 0 8.5 14a4.5 4.5 0 0 0 .8 8.8Z" fill="currentColor"/>
+              <path d="m12 26 1.2 2.2M19 26l1.2 2.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span>weatherly</span>
+        </a>
+        <div class="live-label"><span></span> Live local conditions</div>
+      </header>
+
+      <main>
+        <div class="dashboard-layout">
+          <section class="intro" aria-labelledby="page-title">
+            <p class="eyebrow">YOUR DAY, IN A LITTLE MORE DETAIL</p>
+            <h1 id="page-title">A little weather<br><span>clarity.</span></h1>
+            <p class="intro-copy">A calm, clear look at the weather where you are — or where you’re headed.</p>
+
+            <form id="weather-form" class="search-form">
+              <label class="sr-only" for="city-input">Weather question or city</label>
+              <span class="search-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.7"/>
+                  <path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <input id="city-input" name="query" type="text" maxlength="200"
+                placeholder="Ask “What’s the weather in Lisbon tomorrow?”" autocomplete="off" required>
+              <button id="listen-button" class="listen-button" type="button"
+                aria-label="Speak a city" title="Speak a city">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.7"/>
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3m-4 0h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <button id="search-button" type="submit">
+                <span>Find weather</span>
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M4 10h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </form>
+            <p class="search-hint">Ask about today, tomorrow, or the rainy season. Speech is transcribed in your browser.</p>
+          </section>
+
+          <section class="results-column" aria-label="Weather results">
+            <section id="message-area" class="message-area" aria-live="polite" aria-atomic="true">
+              <p id="status-message" class="status-message">Your next weather check is just a city away.</p>
+            </section>
+
+            <section id="city-facts" class="city-facts" aria-label="Weather facts from around the world">
+              <div class="city-fact-content">
+                <p class="eyebrow">STATIC CLIMATE GUIDE · NOT LIVE WEATHER</p>
+                <div class="fact-city-heading">
+                  <span id="fact-icon" class="fact-city-icon" aria-hidden="true">🌦️</span>
+                  <h2 id="fact-city">Singapore</h2>
+                </div>
+                <div class="city-fact-grid">
+                  <article class="city-fact-item">
+                    <span id="fact-current-icon" class="city-fact-item-icon" aria-hidden="true">🌡️</span>
+                    <div>
+                      <h3>Typical conditions</h3>
+                      <p id="fact-current">Usually warm and humid, with clouds and showers possible.</p>
+                    </div>
+                  </article>
+                  <article class="city-fact-item">
+                    <span id="fact-outlook-icon" class="city-fact-item-icon" aria-hidden="true">🌦️</span>
+                    <div>
+                      <h3>What to expect</h3>
+                      <p id="fact-outlook">Showers can occur throughout the year; this is a climate pattern, not a forecast.</p>
+                    </div>
+                  </article>
+                  <article class="city-fact-item">
+                    <span id="fact-history-icon" class="city-fact-item-icon" aria-hidden="true">📚</span>
+                    <div>
+                      <h3>Climate history</h3>
+                      <p id="fact-history">Long-term conditions are consistently tropical, with rainfall in every season.</p>
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </section>
+
+            <section id="weather-panel" class="weather-panel" aria-label="Weather report" hidden>
+              <div class="report-card">
+                <div class="report-topline">
+                  <div>
+                    <p class="eyebrow">YOUR WEATHER REPORT</p>
+                    <h2 id="location-name"></h2>
+                    <p id="local-time" class="local-time"></p>
+                  </div>
+                  <div id="weather-icon" class="weather-icon" aria-hidden="true">☀</div>
+                </div>
+                <div class="current-weather">
+                  <p id="current-temperature" class="current-temperature"></p>
+                  <p id="current-condition" class="current-condition"></p>
+                </div>
+                <p id="weather-report" class="weather-report"></p>
+                <div class="report-voice-control">
+                  <div class="astra-avatar" aria-label="Astra, your AI weather assistant">
+                    <span aria-hidden="true">👩🏻‍💼</span>
+                    <span>Astra</span>
+                  </div>
+                  <button id="speak-button" class="speak-button" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M11 5 6 9H3v6h3l5 4V5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                      <path d="M15.5 8.5a5 5 0 0 1 0 7m3-10a9 9 0 0 1 0 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                    </svg>
+                    <span>Listen to report</span>
+                  </button>
+                </div>
+              </div>
+              <div class="details-card">
+                <div class="details-heading">
+                  <div>
+                    <p class="eyebrow">A FEW MORE DETAILS</p>
+                    <h2>Today, at a glance</h2>
+                  </div>
+                  <span class="today-badge">TODAY</span>
+                </div>
+                <div id="weather-details" class="details-grid"></div>
+              </div>
+            </section>
+          </section>
+        </div>
+      </main>
+
+      <footer>
+        <span>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></span>
+        <span class="footer-divider" aria-hidden="true">·</span>
+        <span>Made for a calmer forecast</span>
+      </footer>
+    </div>
+  </body>
+</html>
