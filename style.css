@@ -84,11 +84,12 @@ button {
 .topbar::after,
 footer::before {
   position: absolute;
-  left: 0;
-  width: 100%;
+  left: 50%;
+  width: 100vw;
   height: 1px;
   content: "";
   background: rgba(255, 255, 255, 0.38);
+  transform: translateX(-50%);
 }
 
 .topbar::after {
@@ -101,7 +102,7 @@ footer::before {
   gap: 10px;
   color: #fff;
   font-family: "Manrope", sans-serif;
-  font-size: 19px;
+  font-size: 25px;
   font-weight: 800;
   letter-spacing: -0.8px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
@@ -127,7 +128,7 @@ footer::before {
   align-items: center;
   gap: 8px;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
@@ -159,13 +160,13 @@ main {
   border: 1px solid rgba(255, 255, 255, 0.36);
   border-radius: 28px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 42%),
-    linear-gradient(315deg, rgba(204, 226, 255, 0.12), transparent 55%),
-    rgba(21, 37, 61, 0.3);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 42%),
+    linear-gradient(315deg, rgba(204, 226, 255, 0.07), transparent 55%),
+    rgba(21, 37, 61, 0.18);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.3),
     0 24px 70px rgba(7, 18, 35, 0.24);
-  backdrop-filter: blur(22px) saturate(145%);
+  backdrop-filter: blur(6px) saturate(135%);
 }
 
 .dashboard-layout::before {
@@ -406,18 +407,23 @@ h1 span {
     min-height: 133.333vh;
   }
 
+  .topbar::after,
+  footer::before {
+    width: 133.333vw;
+  }
+
   .topbar {
     align-items: flex-start;
     padding-top: 16px;
   }
 
   .brand {
-    font-size: 23px;
+    font-size: 32px;
   }
 
   .live-label {
     padding-top: 5px;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .dashboard-layout {
@@ -518,9 +524,14 @@ h1 span {
   flex-direction: column;
   align-items: flex-start;
   gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+    rgba(13, 27, 44, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 24px rgba(6, 18, 32, 0.08);
   text-align: left;
 }
 
@@ -731,8 +742,12 @@ h1 span {
   padding: 13px;
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 13px;
-  background: rgba(17, 37, 57, 0.46);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+    rgba(17, 37, 57, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 24px rgba(6, 18, 32, 0.08);
 }
 
 .detail-label {
@@ -760,7 +775,7 @@ footer {
   justify-content: center;
   gap: 10px;
   color: #fff;
-  font-size: 13px;
+  font-size: 15px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
@@ -908,7 +923,7 @@ footer a:hover {
   }
 
   .live-label {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .search-form {
@@ -952,7 +967,7 @@ footer a:hover {
 
   footer {
     gap: 7px;
-    font-size: 9px;
+    font-size: 12px;
   }
 }
 
