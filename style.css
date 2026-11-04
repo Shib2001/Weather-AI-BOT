@@ -84,11 +84,11 @@ button {
 .topbar::after,
 footer::before {
   position: absolute;
-  left: 5%;
-  width: 90%;
+  left: 0;
+  width: 100%;
   height: 1px;
   content: "";
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.38);
 }
 
 .topbar::after {
@@ -201,6 +201,7 @@ main {
 .results-column {
   width: 100%;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -211,6 +212,11 @@ main {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1.65px;
+}
+
+.intro .eyebrow {
+  color: #fff;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.9);
 }
 
 h1,
@@ -226,10 +232,12 @@ h1 {
   font-weight: 600;
   letter-spacing: -3.2px;
   line-height: 1.08;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
 h1 span {
   color: #6697c2;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
 .intro-copy {
@@ -378,6 +386,7 @@ h1 span {
 .weather-panel {
   width: 100%;
   max-width: 650px;
+  min-height: 0;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
@@ -387,6 +396,53 @@ h1 span {
 
 .weather-panel[hidden] {
   display: none;
+}
+
+@media (min-width: 901px) {
+  .page-shell {
+    zoom: 0.75;
+    width: 112.5vw;
+    max-width: 2500px;
+    min-height: 133.333vh;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    padding-top: 16px;
+  }
+
+  .brand {
+    font-size: 23px;
+  }
+
+  .live-label {
+    padding-top: 5px;
+    font-size: 14px;
+  }
+
+  .dashboard-layout {
+    height: 570px;
+  }
+
+  .weather-panel {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .weather-panel > .report-card,
+  .weather-panel > .details-card {
+    flex: 0 0 auto;
+  }
+
+  .weather-panel::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .city-facts {
@@ -435,10 +491,17 @@ h1 span {
 
 .fact-city-heading h2 {
   margin: 0;
-  color: var(--ink);
+  color: #fff;
   font-family: "Manrope", sans-serif;
   font-size: clamp(32px, 4vw, 46px);
   letter-spacing: -1px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.city-facts .eyebrow,
+.weather-panel .eyebrow {
+  color: #fff;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.9);
 }
 
 .city-fact-grid {
@@ -449,8 +512,8 @@ h1 span {
 }
 
 .city-fact-item {
-  min-height: 158px;
-  padding: 17px 15px;
+  min-height: 210px;
+  padding: 20px 17px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -469,17 +532,17 @@ h1 span {
 .city-fact-item h3 {
   margin: 0 0 7px;
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .city-fact-item p {
   margin: 0;
   color: #fff;
-  font-size: 12px;
-  line-height: 1.5;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  font-size: 14px;
+  line-height: 1.6;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .report-card,
@@ -505,16 +568,19 @@ h1 span {
 
 .report-topline h2 {
   margin: 10px 0 4px;
+  color: #fff;
   font-family: "Manrope", sans-serif;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.8px;
+  text-shadow: 0 2px 7px rgba(0, 0, 0, 0.9);
 }
 
 .local-time {
   margin: 0;
-  color: #60788d;
+  color: #fff;
   font-size: 11px;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .weather-icon {
@@ -538,26 +604,30 @@ h1 span {
 
 .current-temperature {
   margin: 0;
+  color: #fff;
   font-family: "Manrope", sans-serif;
   font-size: 44px;
   font-weight: 600;
   letter-spacing: -2px;
   line-height: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
 .current-condition {
   margin: 0;
-  color: #718598;
+  color: #fff;
   font-size: 13px;
   text-transform: capitalize;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .weather-report {
   min-height: 62px;
   margin: 17px 0 17px;
-  color: #415d74;
+  color: #fff;
   font-size: 13px;
   line-height: 1.7;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .speak-button {
@@ -586,9 +656,10 @@ h1 span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #6386a1;
+  color: #fff;
   font-size: 12px;
   font-weight: 700;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 .astra-avatar span:first-child {
@@ -629,20 +700,24 @@ h1 span {
 
 .details-heading h2 {
   margin: 8px 0 0;
+  color: #fff;
   font-family: "Manrope", sans-serif;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.4px;
+  text-shadow: 0 2px 7px rgba(0, 0, 0, 0.9);
 }
 
 .today-badge {
   padding: 6px 8px;
   border-radius: 7px;
-  color: #7191ac;
-  background: #f0f6fa;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: #fff;
+  background: rgba(16, 35, 54, 0.48);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.8px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 }
 
 .details-grid {
@@ -654,24 +729,27 @@ h1 span {
 .detail-item {
   min-height: 81px;
   padding: 13px;
-  border: 1px solid #e8eef3;
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 13px;
-  background: #fff;
+  background: rgba(17, 37, 57, 0.46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .detail-label {
   margin: 0 0 10px;
-  color: #5d7488;
+  color: #fff;
   font-size: 10px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
 }
 
 .detail-value {
   margin: 0;
-  color: #344f67;
+  color: #fff;
   font-family: "Manrope", sans-serif;
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.4px;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
 }
 
 footer {
@@ -682,7 +760,7 @@ footer {
   justify-content: center;
   gap: 10px;
   color: #fff;
-  font-size: 10px;
+  font-size: 13px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
