@@ -369,11 +369,41 @@ h1 span {
   text-align: center;
 }
 
+.message-area.is-response {
+  flex: 1;
+  min-height: 0;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  background: rgba(15, 30, 48, 0.2);
+}
+
 .status-message {
   margin: 0;
   color: #fff;
   font-size: 12px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.message-area.is-response .status-message {
+  max-width: 34em;
+  font-size: clamp(16px, 1.8vw, 22px);
+  line-height: 1.6;
+}
+
+.message-audio-button[hidden] {
+  display: none;
+}
+
+.message-area.is-response .message-audio-button {
+  min-height: 44px;
+  padding: 0 18px;
+  font-size: 13px;
 }
 
 .status-message.error {
@@ -401,15 +431,20 @@ h1 span {
 
 @media (min-width: 901px) {
   .page-shell {
-    zoom: 0.75;
-    width: 112.5vw;
+    zoom: 0.6;
+    width: 140.625vw;
     max-width: 2500px;
-    min-height: 133.333vh;
+    min-height: 166.667vh;
+  }
+
+  main {
+    display: flex;
+    align-items: center;
   }
 
   .topbar::after,
   footer::before {
-    width: 133.333vw;
+    width: 166.667vw;
   }
 
   .topbar {
@@ -428,6 +463,7 @@ h1 span {
 
   .dashboard-layout {
     height: 570px;
+    margin-inline: auto;
   }
 
   .weather-panel {

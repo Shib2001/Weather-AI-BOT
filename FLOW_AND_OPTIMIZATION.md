@@ -102,25 +102,12 @@ The backend converts the weather code to a readable condition and builds a
 weather-data object containing the location, date, condition, temperatures,
 precipitation, and other available measurements.
 
-### Step 5: OpenRouter writes the text report (TTT)
+### Step 5: Build the text report (TTT)
 
-`create_weather_report()` sends the question and verified weather-data object
-to OpenRouter's chat-completions API:
-
-```text
-POST https://openrouter.ai/api/v1/chat/completions
-```
-
-The system prompt tells the model to answer only weather questions, use the
-provided measurements, handle today/tomorrow/season questions appropriately,
-and return a short, gentle answer rather than its analysis.
-
-The backend also disables reasoning output and runs `clean_weather_report()` on
-the model's answer so an analysis block is not shown as the weather report.
-
-If OpenRouter returns no usable text, `create_fallback_report()` builds a
-simple report directly from the weather measurements instead. That avoids
-failing the weather endpoint just because the model returned an empty answer.
+`create_fallback_report()` builds the report directly from verified weather
+measurements. The weather endpoint does not call a language model to interpret
+the request or write the report, so valid locations are not rejected by an
+unrelated-question response and weather reports do not depend on OpenRouter.
 
 ### Step 6: The browser displays the result
 
@@ -152,8 +139,8 @@ The microphone button uses the browser's Web Speech
    normal form submit runs. It sends the transcript to `POST /api/weather`.
 3. **Weather lookup:** The backend extracts the place/date and calls Open-Meteo,
    just as it does for typed text.
-4. **TTT — text to text:** OpenRouter creates the report, or the backend uses its
-   data-based fallback.
+4. **TTT — text to text:** The backend builds the report from verified weather
+   measurements. It does not need a language-model call.
 5. **TTS — text to speech:** The user clicks **Listen to report**. The browser
    sends the displayed report text to `POST /api/speech`.
 6. The FastAPI speech endpoint sends the text to OpenRouter's TTS API:
@@ -161,6 +148,12 @@ The microphone button uses the browser's Web Speech
 7. With the default HeyGen model, the backend requests PCM audio, wraps it in a
    WAV container, and returns it as `audio/wav`. The browser plays the returned
    audio.
+
+Greetings and errors are shown in the results area and spoken through the same
+speech endpoint and configured voice as weather reports. If automatic playback
+is blocked, the generated audio remains available from the retry button.
+Geocoding only accepts an exact place match; if no city or country matches,
+the API returns a friendly retry message instead of using a fuzzy match.
 
 So the microphone performs **STT in the browser**, not in FastAPI. The weather
 lookup and report are performed on the backend. TTS happens only after the user

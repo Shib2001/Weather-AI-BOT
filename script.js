@@ -2,7 +2,9 @@ const form = document.querySelector("#weather-form");
 const cityInput = document.querySelector("#city-input");
 const searchButton = document.querySelector("#search-button");
 const listenButton = document.querySelector("#listen-button");
+const messageArea = document.querySelector("#message-area");
 const statusMessage = document.querySelector("#status-message");
+const messageAudioButton = document.querySelector("#message-audio-button");
 const weatherPanel = document.querySelector("#weather-panel");
 const cityFacts = document.querySelector("#city-facts");
 const factIcon = document.querySelector("#fact-icon");
@@ -30,6 +32,7 @@ const backgroundImages = Array.from(
 
 let latestReport = "";
 let latestWeather = null;
+let latestMessage = "";
 let recognition = null;
 let reportAudio = null;
 let reportAudioUrl = null;
@@ -192,7 +195,9 @@ if (SpeechRecognition) {
       network: "Speech recognition needs an internet connection.",
     };
     if (event.error !== "aborted") {
-      showStatus(messages[event.error] || "Speech recognition failed. Please try again.", "error");
+      const message = messages[event.error] || "Speech recognition failed. Please try again.";
+      showResponse(message, "error");
+      void playResponseVoice(message);
     }
   };
 
@@ -209,6 +214,105 @@ if (SpeechRecognition) {
 function showStatus(message, state = "") {
   statusMessage.textContent = message;
   statusMessage.className = `status-message ${state}`.trim();
+}
+
+function showResponse(message, state = "") {
+  stopCurrentSpeech();
+  latestMessage = message;
+  messageArea.classList.add("is-response");
+  messageAudioButton.hidden = false;
+  messageAudioButton.disabled = false;
+  messageAudioButton.textContent = "Hear message";
+  cityFacts.hidden = true;
+  weatherPanel.hidden = true;
+  showStatus(message, state);
+}
+
+function stopCurrentSpeech() {
+  if (reportAudio) {
+    reportAudio.pause();
+    reportAudio = null;
+  }
+  if (reportAudioUrl) {
+    URL.revokeObjectURL(reportAudioUrl);
+    reportAudioUrl = null;
+  }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  if (messageAudioButton) {
+    messageAudioButton.disabled = false;
+    messageAudioButton.textContent = "Hear message";
+  }
+}
+
+async function playResponseVoice(message) {
+  let audio = reportAudio;
+  if (!audio) {
+    messageAudioButton.disabled = true;
+    messageAudioButton.textContent = "Preparing Astra’s voice…";
+    try {
+      const response = await fetch("/api/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Could not create speech.");
+      }
+
+      reportAudioUrl = URL.createObjectURL(await response.blob());
+      reportAudio = new Audio(reportAudioUrl);
+      audio = reportAudio;
+      const audioUrl = reportAudioUrl;
+      const resetAudio = () => {
+        if (reportAudio !== audio) return;
+        URL.revokeObjectURL(audioUrl);
+        reportAudio = null;
+        reportAudioUrl = null;
+        messageAudioButton.disabled = false;
+        messageAudioButton.textContent = "Try voice again";
+      };
+      audio.addEventListener("ended", resetAudio, { once: true });
+      audio.addEventListener("error", () => {
+        resetAudio();
+        showStatus(
+          `${message} Astra’s voice could not be played. Select “Try voice again” to retry.`,
+          "error",
+        );
+      }, { once: true });
+    } catch (error) {
+      messageAudioButton.disabled = false;
+      messageAudioButton.textContent = "Try voice again";
+      const reason = error instanceof Error ? error.message : "Unknown speech error.";
+      showStatus(
+        `${message} Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`,
+        "error",
+      );
+      return;
+    }
+  }
+
+  try {
+    await audio.play();
+    messageAudioButton.disabled = false;
+    messageAudioButton.textContent = "Speaking…";
+    showStatus(message);
+  } catch {
+    messageAudioButton.disabled = false;
+    messageAudioButton.textContent = reportAudio === audio
+      ? "Play with Astra’s voice"
+      : "Try voice again";
+    showStatus(
+      `${message} Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`,
+      "error",
+    );
+    if (reportAudio !== audio && reportAudioUrl) {
+      URL.revokeObjectURL(reportAudioUrl);
+      reportAudioUrl = null;
+    }
+  }
 }
 
 function formatTemperature(value) {
@@ -319,6 +423,10 @@ form.addEventListener("submit", async (event) => {
 
   searchButton.disabled = true;
   searchButton.querySelector("span").textContent = "Checking…";
+  stopCurrentSpeech();
+  latestMessage = "";
+  messageArea.classList.remove("is-response");
+  messageAudioButton.hidden = true;
   weatherPanel.hidden = true;
   cityFacts.hidden = false;
   showStatus("Finding the latest conditions…", "loading");
@@ -334,15 +442,27 @@ form.addEventListener("submit", async (event) => {
       throw new Error(data.detail || data.error || "Could not load weather. Please try again.");
     }
 
+    if (data.type === "greeting") {
+      showResponse(data.message);
+      void playResponseVoice(data.message);
+      return;
+    }
+
     renderWeather(data.weather, data.report);
     showStatus("Here’s a little clarity for your day. Astra is preparing your spoken report…");
     void speakWeatherReport(true);
   } catch (error) {
-    showStatus(error.message || "Something went wrong. Please try again.", "error");
+    const message = error.message || "Something went wrong. Please try again.";
+    showResponse(message, "error");
+    void playResponseVoice(message);
   } finally {
     searchButton.disabled = false;
     searchButton.querySelector("span").textContent = "Find weather";
   }
+});
+
+messageAudioButton.addEventListener("click", () => {
+  if (latestMessage) void playResponseVoice(latestMessage);
 });
 
 speakButton.addEventListener("click", () => {
@@ -372,10 +492,12 @@ function speakInBrowser(text) {
     speakButton.disabled = false;
     speakButton.querySelector("span").textContent = "Listen to report";
   };
-  utterance.onerror = () => {
+  utterance.onerror = (event) => {
     speakButton.disabled = false;
     speakButton.querySelector("span").textContent = "Listen to report";
-    showStatus("Your browser could not play Astra’s voice. Try “Listen to report” again.", "error");
+    if (event.error !== "canceled" && event.error !== "interrupted") {
+      showStatus("Your browser could not play Astra’s voice. Try “Listen to report” again.", "error");
+    }
   };
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);

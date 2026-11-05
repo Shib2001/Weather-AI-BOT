@@ -7,6 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 import wave
 from pathlib import Path
 
@@ -103,10 +104,73 @@ def weather_description(code):
     return descriptions.get(code, "current conditions")
 
 
+def greeting_response(query):
+    normalized = re.sub(r"[^\w\s']", "", query.casefold())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if normalized in {"hello", "hi", "hey", "hello there", "hi there", "hey there"}:
+        return (
+            "Hello! I’m Astra, your friendly weather assistant. I can help you "
+            "check current conditions, forecasts, and typical rainy-season "
+            "patterns for a city or country. What would you like to know?"
+        )
+    if normalized in {"good morning", "good afternoon", "good evening"}:
+        greeting = normalized.capitalize()
+        return (
+            f"{greeting}! I’m Astra, your friendly weather assistant. I can help "
+            "you check current conditions, forecasts, and typical rainy-season "
+            "patterns for a city or country. What would you like to know?"
+        )
+    if normalized in {"how are you", "how are you doing", "how's it going"}:
+        return (
+            "I’m doing well, thank you for asking! I’m Astra, your friendly "
+            "weather assistant. I can help you check current conditions, "
+            "forecasts, and typical rainy-season patterns for a city or country."
+        )
+    return None
+
+
+WEATHER_TOPIC_PATTERN = re.compile(
+    r"\b(?:weather|forecast|temperature|rain|rainy|rainfall|monsoon|"
+    r"snow|snowfall|wind|humidity|precipitation|storm|sunny|cloudy)\b",
+    re.IGNORECASE,
+)
+QUESTION_START_PATTERN = re.compile(
+    r"^(?:who|what|when|where|why|which|whose|whom|how|"
+    r"can|could|would|will|should|is|are|do|does|did)\b",
+    re.IGNORECASE,
+)
+
+
+def is_unrelated_question(query):
+    return bool(
+        QUESTION_START_PATTERN.search(query.strip())
+        and not WEATHER_TOPIC_PATTERN.search(query)
+    )
+
+
+WEATHER_LOCATION_NOT_FOUND = (
+    "Sorry, I can't find the weather for the city or country you requested. "
+    "Please try another city or country. Thank you."
+)
+
+
+def normalize_place_name(value):
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    without_accents = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return re.sub(r"\W+", " ", without_accents).strip()
+
+
 def parse_weather_question(question):
     question = question.strip()
     if not question or len(question) > 200 or any(ord(char) < 32 for char in question):
         raise WeatherError("Enter a city name (up to 100 characters).", status=400)
+    if not any(char.isalpha() for char in question) or any(
+        not (char.isalpha() or char.isspace() or char in " ,.'’?!-")
+        for char in question
+    ):
+        raise WeatherError(WEATHER_LOCATION_NOT_FOUND, status=422)
 
     normalized = re.sub(r"\s+", " ", question).strip().rstrip("?!.,")
     lowered = normalized.lower()
@@ -278,17 +342,39 @@ def fetch_weather(query):
         )
         location_data = request_json(f"{GEOCODING_URL}?{geocoding_query}")
         locations = location_data.get("results", [])
-        if not locations:
-            raise WeatherError(
-                f"I couldn't find a city matching “{city}”. Try adding its country.",
-                status=422,
-            )
+        normalized_city = normalize_place_name(city)
         exact_matches = [
             item
             for item in locations
-            if item.get("name", "").casefold() == city.casefold()
+            if normalized_city
+            in {
+                normalize_place_name(item.get("name", "")),
+                normalize_place_name(
+                    " ".join(
+                        part
+                        for part in (
+                            item.get("name", ""),
+                            item.get("country", ""),
+                        )
+                        if part
+                    )
+                ),
+                normalize_place_name(
+                    " ".join(
+                        part
+                        for part in (
+                            item.get("name", ""),
+                            item.get("admin1", ""),
+                            item.get("country", ""),
+                        )
+                        if part
+                    )
+                ),
+            }
         ]
-        location = (exact_matches or locations)[0]
+        if not exact_matches:
+            raise WeatherError(WEATHER_LOCATION_NOT_FOUND, status=422)
+        location = exact_matches[0]
     forecast_query = urllib.parse.urlencode(
         {
             "latitude": location["latitude"],
@@ -645,8 +731,18 @@ def javascript():
 @app.post("/api/weather")
 def weather_endpoint(request: WeatherRequest):
     query = request.query or request.city or ""
+    greeting = greeting_response(query)
+    if greeting:
+        return {"type": "greeting", "message": greeting}
+    if is_unrelated_question(query):
+        raise WeatherError(
+            "I can only help with weather questions. Try asking about the weather "
+            "in a city.",
+            status=422,
+        )
+
     weather = fetch_weather(query)
-    report = create_weather_report(weather)
+    report = create_fallback_report(weather)
     return {"weather": weather, "report": report}
 
 
