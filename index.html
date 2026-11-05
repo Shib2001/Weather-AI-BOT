@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#eaf4fb">
     <title>Weatherly — A gentler weather report</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/style.css">
-    <script src="/script.js" defer></script>
+    <link rel="stylesheet" href="/style.css?v=6">
+    <script src="/script.js?v=6" defer></script>
   </head>
   <body>
     <div class="background-slideshow" aria-hidden="true">
@@ -137,7 +137,7 @@
                     <p class="eyebrow">A FEW MORE DETAILS</p>
                     <h2>Today, at a glance</h2>
                   </div>
-                  <span class="today-badge">TODAY</span>
+                  <span id="period-badge" class="today-badge">TODAY</span>
                 </div>
                 <div id="weather-details" class="details-grid"></div>
               </div>

@@ -233,6 +233,7 @@ h1 {
   font-weight: 600;
   letter-spacing: -3.2px;
   line-height: 1.08;
+  color: #fff;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
@@ -406,6 +407,15 @@ h1 span {
   font-size: 13px;
 }
 
+.message-area.is-greeting {
+  border: 0;
+  background: transparent;
+}
+
+.message-area.is-greeting .status-message {
+  display: none;
+}
+
 .status-message.error {
   color: #ffe0e0;
 }
@@ -430,6 +440,10 @@ h1 span {
 }
 
 @media (min-width: 901px) {
+  html {
+    overflow-x: clip;
+  }
+
   .page-shell {
     zoom: 0.6;
     width: 140.625vw;
@@ -462,28 +476,44 @@ h1 span {
   }
 
   .dashboard-layout {
-    height: 570px;
+    min-height: 570px;
     margin-inline: auto;
   }
 
+  .city-facts {
+    min-height: 0;
+    overflow: visible;
+  }
+
   .weather-panel {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+    overflow: visible;
   }
 
   .weather-panel > .report-card,
   .weather-panel > .details-card {
     flex: 0 0 auto;
   }
+}
 
-  .weather-panel::-webkit-scrollbar {
-    display: none;
+@media (min-width: 1850px) and (max-width: 1999px) {
+  .page-shell {
+    zoom: 0.666667;
+    width: 126.5625vw;
+    max-width: none;
+    min-height: 150vh;
+  }
+}
+
+@media (min-width: 2000px) {
+  .page-shell {
+    zoom: 0.75;
+    width: 112.5vw;
+    max-width: none;
+    min-height: 133.333vh;
   }
 }
 
@@ -491,10 +521,11 @@ h1 span {
   width: 100%;
   flex: 1;
   min-height: 390px;
-  padding: 32px;
-  display: grid;
-  place-items: center;
-  text-align: center;
+  min-width: 0;
+  padding: 28px 30px;
+  display: flex;
+  align-items: flex-start;
+  text-align: left;
 }
 
 .city-facts[hidden] {
@@ -503,6 +534,7 @@ h1 span {
 
 .city-fact-content {
   width: 100%;
+  min-width: 0;
   transition: opacity 450ms ease, transform 450ms ease;
 }
 
@@ -512,23 +544,15 @@ h1 span {
 }
 
 .fact-city-heading {
-  margin: 18px 0 16px;
+  margin: 18px 0 24px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 10px;
 }
 
 .fact-city-icon {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.14);
-  font-size: 25px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  font-size: 28px;
 }
 
 .fact-city-heading h2 {
@@ -548,48 +572,48 @@ h1 span {
 
 .city-fact-grid {
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
 }
 
 .city-fact-item {
-  min-height: 210px;
-  padding: 20px 17px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 12px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
-    rgba(13, 27, 44, 0.12);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 8px 24px rgba(6, 18, 32, 0.08);
+  min-height: 0;
+  min-width: 0;
+  padding: 16px 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.23);
   text-align: left;
 }
 
+.city-fact-item > div {
+  min-width: 0;
+}
+
 .city-fact-item-icon {
-  font-size: 23px;
+  padding-top: 1px;
+  font-size: 20px;
   line-height: 1;
 }
 
 .city-fact-item h3 {
-  margin: 0 0 7px;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  margin: 3px 0 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.1px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.72);
 }
 
 .city-fact-item p {
   margin: 0;
-  color: #fff;
-  font-size: 14px;
+  color: rgba(247, 250, 255, 0.82);
+  font-size: 16px;
   line-height: 1.6;
-  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  overflow-wrap: anywhere;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
 }
 
 .report-card,
@@ -603,7 +627,8 @@ h1 span {
 
 .report-card {
   min-height: 0;
-  padding: 18px 12px 22px;
+  padding: 8px 0 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.28);
 }
 
 .report-topline {
@@ -733,8 +758,7 @@ h1 span {
 }
 
 .details-card {
-  padding: 20px 12px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.5);
+  padding: 22px 0 0;
 }
 
 .details-heading {
@@ -742,25 +766,25 @@ h1 span {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .details-heading h2 {
-  margin: 8px 0 0;
+  margin: 7px 0 0;
   color: #fff;
   font-family: "Manrope", sans-serif;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.4px;
   text-shadow: 0 2px 7px rgba(0, 0, 0, 0.9);
 }
 
 .today-badge {
-  padding: 6px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  color: #fff;
-  background: rgba(16, 35, 54, 0.48);
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #e7f4ff;
+  background: rgba(144, 196, 228, 0.13);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.8px;
@@ -769,38 +793,32 @@ h1 span {
 
 .details-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: 18px;
 }
 
 .detail-item {
-  min-height: 81px;
-  padding: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: 13px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
-    rgba(17, 37, 57, 0.24);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 8px 24px rgba(6, 18, 32, 0.08);
+  min-height: 0;
+  padding: 12px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .detail-label {
-  margin: 0 0 10px;
-  color: #fff;
-  font-size: 10px;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+  margin: 0 0 7px;
+  color: rgba(240, 246, 252, 0.78);
+  font-size: 11px;
+  line-height: 1.4;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.72);
 }
 
 .detail-value {
   margin: 0;
   color: #fff;
   font-family: "Manrope", sans-serif;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.4px;
-  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75);
 }
 
 footer {
@@ -946,6 +964,10 @@ footer a:hover {
 
   .details-card {
     padding: 18px 4px 4px;
+  }
+
+  .details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

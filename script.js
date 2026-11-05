@@ -33,9 +33,13 @@ const backgroundImages = Array.from(
 let latestReport = "";
 let latestWeather = null;
 let latestMessage = "";
+let latestMessageIsGreeting = false;
 let recognition = null;
 let reportAudio = null;
 let reportAudioUrl = null;
+let welcomeAudio = null;
+let welcomeAudioUrl = null;
+let welcomeAudioCleanup = null;
 const cityWeatherFacts = [
   {
     city: "Singapore",
@@ -157,8 +161,73 @@ function startBackgroundSlideshow() {
   }
 }
 
+function startWelcomeVoice() {
+  const sessionKey = "weatherly-welcome-played-v1";
+  try {
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, "true");
+  } catch (error) {
+    console.warn("Could not save the welcome-voice session marker.", error);
+  }
+
+  const welcomeText =
+    "Hey there, welcome to your personal weather forecast AI assistant, Weatherly. " +
+    "I’m your weather reporter, Astra. Let me know if you want to know the weather in your country.";
+  welcomeAudio = new Audio();
+  welcomeAudio.preload = "auto";
+  let hasPlayed = false;
+
+  const removeGestureListeners = () => {
+    document.removeEventListener("pointerdown", playAfterGesture);
+    document.removeEventListener("keydown", playAfterGesture);
+  };
+  const releaseAudio = () => {
+    removeGestureListeners();
+    if (welcomeAudioUrl) {
+      URL.revokeObjectURL(welcomeAudioUrl);
+      welcomeAudioUrl = null;
+    }
+    welcomeAudioCleanup = null;
+  };
+  const playAfterGesture = () => {
+    if (!welcomeAudio.src || hasPlayed) return;
+    void welcomeAudio.play().then(() => {
+      hasPlayed = true;
+      removeGestureListeners();
+    }).catch(() => {});
+  };
+
+  document.addEventListener("pointerdown", playAfterGesture);
+  document.addEventListener("keydown", playAfterGesture);
+  welcomeAudioCleanup = releaseAudio;
+  welcomeAudio.addEventListener("ended", releaseAudio, { once: true });
+  welcomeAudio.addEventListener("error", () => {
+    console.warn("The welcome voice audio could not be played.");
+    releaseAudio();
+  }, { once: true });
+
+  void fetch("/api/speech", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: welcomeText }),
+  }).then(async (response) => {
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Could not prepare the welcome voice.");
+    }
+    welcomeAudioUrl = URL.createObjectURL(await response.blob());
+    welcomeAudio.src = welcomeAudioUrl;
+    welcomeAudio.load();
+    playAfterGesture();
+  }).catch((error) => {
+    console.warn("The welcome voice could not be prepared.", error);
+    releaseAudio();
+  });
+}
+
 startBackgroundSlideshow();
 startCityFactRotation();
+startWelcomeVoice();
 
 const SpeechRecognition =
   window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -216,10 +285,44 @@ function showStatus(message, state = "") {
   statusMessage.className = `status-message ${state}`.trim();
 }
 
+function greetingResponseFor(query) {
+  const nameMatch = query.match(
+    /\b(?:my name is|i am|i['’]m|call me)\s+([A-Za-z][A-Za-z'-]{0,30})\b/i,
+  );
+  const name = nameMatch?.[1].replace(/['-]+$/, "") || "";
+  const greetingText = nameMatch
+    ? `${query.slice(0, nameMatch.index)} ${query.slice(nameMatch.index + nameMatch[0].length)}`
+    : query;
+  const normalized = greetingText
+    .toLowerCase()
+    .replace(/[’']/g, " ")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\b(?:and|please)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const isGreeting =
+    /^(?:(?:hello|hi|hey)(?: there)?|good (?:morning|afternoon|evening)|(?:morning|afternoon|evening)|how are you(?: doing)?|how is it going|how s it going)(?:\s+good (?:morning|afternoon|evening))?(?:\s+(?:how are you(?: doing)?|how is it going|how s it going))?$/.test(normalized);
+
+  if (!isGreeting) return null;
+
+  const timeGreeting = normalized.match(/\b(?:good )?(morning|afternoon|evening)\b/);
+  const timePhrase = timeGreeting ? ` good ${timeGreeting[1]}` : "";
+  if (name) {
+    const displayName = `${name[0].toUpperCase()}${name.slice(1)}`;
+    return `Hey${timePhrase}! How are you? I’m Astra, your weather assistant. How are you, ${displayName}?`;
+  }
+  if (normalized.startsWith("how are you")) {
+    return "I’m doing well, thank you for asking! I’m Astra, your weather assistant. What city can I help you with?";
+  }
+  return `Hey${timePhrase}! How are you? I’m Astra, your weather assistant. What city’s weather can I help you with?`;
+}
+
 function showResponse(message, state = "") {
   stopCurrentSpeech();
   latestMessage = message;
+  latestMessageIsGreeting = false;
   messageArea.classList.add("is-response");
+  messageArea.classList.remove("is-greeting");
   messageAudioButton.hidden = false;
   messageAudioButton.disabled = false;
   messageAudioButton.textContent = "Hear message";
@@ -228,7 +331,42 @@ function showResponse(message, state = "") {
   showStatus(message, state);
 }
 
-function stopCurrentSpeech() {
+function showGreetingResponse(message) {
+  stopCurrentSpeech();
+  latestMessage = message;
+  latestMessageIsGreeting = true;
+  messageArea.classList.remove("is-response");
+  messageArea.classList.add("is-greeting");
+  messageAudioButton.hidden = false;
+  messageAudioButton.disabled = false;
+  messageAudioButton.textContent = "Hear greeting";
+  cityFacts.hidden = false;
+  weatherPanel.hidden = true;
+  showStatus("");
+}
+
+function showGreetingVoiceError(message) {
+  messageArea.classList.remove("is-greeting");
+  messageArea.classList.remove("is-response");
+  cityFacts.hidden = false;
+  weatherPanel.hidden = true;
+  showStatus(message, "error");
+}
+
+function stopWelcomeVoice() {
+  if (welcomeAudioCleanup) welcomeAudioCleanup();
+  if (welcomeAudio) {
+    welcomeAudio.pause();
+    welcomeAudio = null;
+  }
+  if (welcomeAudioUrl) {
+    URL.revokeObjectURL(welcomeAudioUrl);
+    welcomeAudioUrl = null;
+  }
+}
+
+function stopCurrentSpeech(stopWelcome = true) {
+  if (stopWelcome) stopWelcomeVoice();
   if (reportAudio) {
     reportAudio.pause();
     reportAudio = null;
@@ -246,11 +384,14 @@ function stopCurrentSpeech() {
   }
 }
 
-async function playResponseVoice(message) {
+async function playResponseVoice(message, isGreeting = false) {
+  const retryLabel = isGreeting ? "Hear greeting" : "Hear message";
   let audio = reportAudio;
   if (!audio) {
     messageAudioButton.disabled = true;
-    messageAudioButton.textContent = "Preparing Astra’s voice…";
+    messageAudioButton.textContent = isGreeting
+      ? "Preparing greeting voice…"
+      : "Preparing Astra’s voice…";
     try {
       const response = await fetch("/api/speech", {
         method: "POST",
@@ -272,42 +413,46 @@ async function playResponseVoice(message) {
         reportAudio = null;
         reportAudioUrl = null;
         messageAudioButton.disabled = false;
-        messageAudioButton.textContent = "Try voice again";
+        messageAudioButton.textContent = retryLabel;
       };
       audio.addEventListener("ended", resetAudio, { once: true });
       audio.addEventListener("error", () => {
         resetAudio();
-        showStatus(
-          `${message} Astra’s voice could not be played. Select “Try voice again” to retry.`,
-          "error",
-        );
+        const voiceError = isGreeting
+          ? "Astra’s greeting voice could not be played. Select “Try greeting again” to retry."
+          : `${message} Astra’s voice could not be played. Select “Try voice again” to retry.`;
+        if (isGreeting) showGreetingVoiceError(voiceError);
+        else showStatus(voiceError, "error");
       }, { once: true });
     } catch (error) {
       messageAudioButton.disabled = false;
-      messageAudioButton.textContent = "Try voice again";
+      messageAudioButton.textContent = isGreeting ? "Try greeting again" : "Try voice again";
       const reason = error instanceof Error ? error.message : "Unknown speech error.";
-      showStatus(
-        `${message} Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`,
-        "error",
-      );
+      const voiceError = isGreeting
+        ? `Astra’s greeting voice could not be prepared: ${reason} Select “Try greeting again” to retry.`
+        : `${message} Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`;
+      if (isGreeting) showGreetingVoiceError(voiceError);
+      else showStatus(voiceError, "error");
       return;
     }
   }
 
   try {
-    await audio.play();
     messageAudioButton.disabled = false;
-    messageAudioButton.textContent = "Speaking…";
-    showStatus(message);
+    messageAudioButton.textContent = isGreeting ? "Play greeting" : "Play with Astra’s voice";
+    if (!isGreeting) showStatus(message);
+    await audio.play();
+    messageAudioButton.textContent = isGreeting ? "Playing greeting…" : "Speaking…";
   } catch {
     messageAudioButton.disabled = false;
     messageAudioButton.textContent = reportAudio === audio
-      ? "Play with Astra’s voice"
-      : "Try voice again";
-    showStatus(
-      `${message} Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`,
-      "error",
-    );
+      ? isGreeting ? "Play greeting" : "Play with Astra’s voice"
+      : isGreeting ? "Try greeting again" : "Try voice again";
+    const playbackError = isGreeting
+      ? `Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s greeting.`
+      : `${message} Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`;
+    if (isGreeting) showGreetingVoiceError(playbackError);
+    else showStatus(playbackError, "error");
     if (reportAudio !== audio && reportAudioUrl) {
       URL.revokeObjectURL(reportAudioUrl);
       reportAudioUrl = null;
@@ -355,9 +500,16 @@ function renderWeather(weather, report) {
   }
 
   locationName.textContent = weather.location;
-  localTime.textContent = weather.local_time
-    ? `${weather.period === "tomorrow" ? "Forecast" : "Local time"} · ${weather.period_date || weather.local_time.replace("T", " ")}`
-    : "Current local conditions";
+  const periodLabels = {
+    day_before_yesterday: "The day before yesterday",
+    yesterday: "Historical weather",
+    today: "Local time",
+    tomorrow: "Forecast",
+    day_after_tomorrow: "Forecast",
+  };
+  localTime.textContent =
+    `${periodLabels[weather.period] || "Local time"} · ` +
+    `${weather.period_date || weather.local_time?.replace("T", " ") || ""}`;
   weatherIcon.textContent = iconForCondition(weather.condition);
   currentTemperature.textContent = formatTemperature(weather.temperature_c);
   currentCondition.textContent = weather.condition;
@@ -366,8 +518,16 @@ function renderWeather(weather, report) {
   latestWeather = weather;
 
   weatherDetails.replaceChildren();
-  const periodLabel = weather.period === "tomorrow" ? "Tomorrow" : "Today";
+  const periodLabelsForCards = {
+    day_before_yesterday: "The day before yesterday",
+    yesterday: "Yesterday",
+    today: "Today",
+    tomorrow: "Tomorrow",
+    day_after_tomorrow: "The day after tomorrow",
+  };
+  const periodLabel = periodLabelsForCards[weather.period] || "Today";
   document.querySelector(".details-heading h2").textContent = `${periodLabel}, at a glance`;
+  document.querySelector("#period-badge").textContent = periodLabel.toUpperCase();
   addDetail("🌡️ Feels like", formatTemperature(weather.feels_like_c));
   addDetail(`🔺 ${periodLabel}’s high`, formatTemperature(weather.today_high_c));
   addDetail(`🔻 ${periodLabel}’s low`, formatTemperature(weather.today_low_c));
@@ -423,15 +583,39 @@ form.addEventListener("submit", async (event) => {
 
   searchButton.disabled = true;
   searchButton.querySelector("span").textContent = "Checking…";
-  stopCurrentSpeech();
+  stopCurrentSpeech(false);
   latestMessage = "";
+  latestMessageIsGreeting = false;
   messageArea.classList.remove("is-response");
+  messageArea.classList.remove("is-greeting");
   messageAudioButton.hidden = true;
   weatherPanel.hidden = true;
   cityFacts.hidden = false;
   showStatus("Finding the latest conditions…", "loading");
 
   try {
+    const greeting = greetingResponseFor(city);
+    if (greeting) {
+      let greetingMessage = greeting;
+      try {
+        const response = await fetch("/api/greeting", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: city }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Could not load the greeting.");
+        }
+        greetingMessage = data.message || greeting;
+      } catch (error) {
+        console.warn("Could not load the cached greeting; using the local greeting.", error);
+      }
+      showGreetingResponse(greetingMessage);
+      void playResponseVoice(greetingMessage, true);
+      return;
+    }
+
     const response = await fetch("/api/weather", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -440,12 +624,6 @@ form.addEventListener("submit", async (event) => {
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || data.error || "Could not load weather. Please try again.");
-    }
-
-    if (data.type === "greeting") {
-      showResponse(data.message);
-      void playResponseVoice(data.message);
-      return;
     }
 
     renderWeather(data.weather, data.report);
@@ -462,7 +640,9 @@ form.addEventListener("submit", async (event) => {
 });
 
 messageAudioButton.addEventListener("click", () => {
-  if (latestMessage) void playResponseVoice(latestMessage);
+  if (latestMessage) {
+    void playResponseVoice(latestMessage, latestMessageIsGreeting);
+  }
 });
 
 speakButton.addEventListener("click", () => {
@@ -504,16 +684,53 @@ function speakInBrowser(text) {
   return true;
 }
 
+function spokenWeatherDetails(weather) {
+  const details = [];
+  const temperature = (value) => `${Math.round(value)} degrees Celsius`;
+
+  if (weather.feels_like_c != null) {
+    details.push(`It feels like ${temperature(weather.feels_like_c)}`);
+  }
+  if (weather.today_high_c != null) {
+    details.push(`The high could reach ${temperature(weather.today_high_c)}`);
+  }
+  if (weather.today_low_c != null) {
+    details.push(`The low could drop to ${temperature(weather.today_low_c)}`);
+  }
+  if (weather.wind_kmh != null) {
+    details.push(`Winds are around ${Math.round(weather.wind_kmh)} kilometers per hour`);
+  }
+  if (weather.humidity_percent != null) {
+    details.push(`Humidity is ${Math.round(weather.humidity_percent)} percent`);
+  }
+  if (weather.precipitation_mm != null) {
+    details.push(`Precipitation is expected to be ${weather.precipitation_mm} millimeters`);
+  }
+  if (weather.precipitation_probability_percent != null) {
+    details.push(`The chance of rain is ${Math.round(weather.precipitation_probability_percent)} percent`);
+  }
+
+  if (details.length === 0) return "";
+  const firstDetail = `${details[0][0].toLowerCase()}${details[0].slice(1)}`;
+  const remainingDetails = details.slice(1).join(". ");
+  return `Also, in ${weather.location.split(",")[0].trim()}, ${firstDetail}.` +
+    `${remainingDetails ? ` ${remainingDetails}.` : ""}`;
+}
+
 async function speakWeatherReport(automatic = false) {
   if (!latestReport || !latestWeather) {
     showStatus("There is no weather report to read aloud yet.", "error");
     return;
   }
+  stopWelcomeVoice();
 
   const cityName = latestWeather.location.split(",")[0].trim();
+  const spokenDetails = spokenWeatherDetails(latestWeather);
+  const reportText = latestReport.trim().replace(/[.!?]+$/, "");
   const spokenReport =
     `${greetingForWeather(latestWeather)}, I am your AI assistant Astra. ` +
-    `The weather report for ${cityName} is: ${latestReport} Enjoy, have a great time.`;
+    `The weather report for ${cityName} is: ${reportText}.` +
+    `${spokenDetails ? ` ${spokenDetails}` : ""} Enjoy, have a great time.`;
 
   speakButton.disabled = true;
   speakButton.querySelector("span").textContent = "Preparing voice…";

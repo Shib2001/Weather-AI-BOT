@@ -1,6 +1,11 @@
 import calendar
+import base64
+import binascii
+import datetime
+import hashlib
 import io
 import json
+import logging
 import os
 import re
 import sys
@@ -11,19 +16,28 @@ import unicodedata
 import wave
 from pathlib import Path
 
+import redis
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 
-
 APP_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_TTS_URL = "https://openrouter.ai/api/v1/audio/speech"
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+GEOCODING_CACHE_TTL = 30 * 24 * 60 * 60
+FORECAST_CACHE_TTL = 5 * 60
+HISTORICAL_CACHE_TTL = 90 * 24 * 60 * 60
+YESTERDAY_CACHE_TTL = 24 * 60 * 60
+REPORT_CACHE_TTL = 15 * 24 * 60 * 60
+GREETING_CACHE_TTL = 30 * 24 * 60 * 60
+ERROR_CACHE_TTL = 60 * 60
+SPEECH_CACHE_TTL = 30 * 24 * 60 * 60
 
 
 def load_project_env():
@@ -44,6 +58,18 @@ def load_project_env():
 
 load_project_env()
 
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = (
+    redis.Redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=1,
+        socket_timeout=1,
+    )
+    if REDIS_URL
+    else None
+)
+
 
 class WeatherError(Exception):
     def __init__(self, message, status=502):
@@ -51,11 +77,90 @@ class WeatherError(Exception):
         self.status = status
 
 
-def request_json(url, headers=None, data=None, timeout=20, service="weather service"):
+def make_cache_key(namespace, value):
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"weather-bot:{namespace}:v1:{digest}"
+
+
+def get_cached_json(key):
+    if redis_client is None:
+        return None
+
+    try:
+        cached_value = redis_client.get(key)
+    except redis.exceptions.RedisError as error:
+        logger.warning("Redis cache read failed; continuing without cache: %s", error)
+        return None
+
+    if cached_value is None:
+        return None
+
+    try:
+        return json.loads(cached_value)
+    except json.JSONDecodeError as error:
+        logger.warning("Ignoring invalid JSON in Redis cache key %s: %s", key, error)
+        return None
+
+
+def set_cached_json(key, value, ttl_seconds):
+    if redis_client is None:
+        return
+
+    try:
+        redis_client.set(key, json.dumps(value), ex=ttl_seconds)
+    except redis.exceptions.RedisError as error:
+        logger.warning("Redis cache write failed; continuing without cache: %s", error)
+
+
+def get_cached_speech(key):
+    cached_value = get_cached_json(key)
+    if not isinstance(cached_value, dict):
+        return None
+
+    encoded_audio = cached_value.get("audio")
+    media_type = cached_value.get("media_type")
+    if not isinstance(encoded_audio, str) or not isinstance(media_type, str):
+        return None
+
+    try:
+        return base64.b64decode(encoded_audio, validate=True), media_type
+    except (ValueError, binascii.Error) as error:
+        logger.warning("Ignoring invalid audio in Redis cache key %s: %s", key, error)
+        return None
+
+
+def set_cached_speech(key, audio, media_type, ttl_seconds):
+    set_cached_json(
+        key,
+        {
+            "audio": base64.b64encode(audio).decode("ascii"),
+            "media_type": media_type,
+        },
+        ttl_seconds,
+    )
+
+
+def request_json(
+    url,
+    headers=None,
+    data=None,
+    timeout=20,
+    service="weather service",
+    cache_key=None,
+    cache_ttl=None,
+):
+    if cache_key and cache_ttl:
+        cached_value = get_cached_json(cache_key)
+        if cached_value is not None:
+            return cached_value
+
     request = urllib.request.Request(url, headers=headers or {}, data=data)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            result = json.loads(response.read().decode("utf-8"))
+            if cache_key and cache_ttl:
+                set_cached_json(cache_key, result, cache_ttl)
+            return result
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         print(f"{service} HTTP {error.code}: {detail}", file=sys.stderr)
@@ -105,33 +210,61 @@ def weather_description(code):
 
 
 def greeting_response(query):
+    name_match = re.search(
+        r"\b(?:my name is|i am|i['’]m|call me)\s+"
+        r"([\w][\w'-]{0,30})\b",
+        query,
+        re.IGNORECASE,
+    )
+    name = name_match.group(1).strip("'-") if name_match else None
+    if name_match:
+        query = query[:name_match.start()] + query[name_match.end():]
+
     normalized = re.sub(r"[^\w\s']", "", query.casefold())
     normalized = re.sub(r"\s+", " ", normalized).strip()
-    if normalized in {"hello", "hi", "hey", "hello there", "hi there", "hey there"}:
+    normalized = re.sub(r"\b(?:and|please)\b", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    greeting_pattern = re.compile(
+        r"^(?:(?:hello|hi|hey)(?: there)?|"
+        r"good (?:morning|afternoon|evening)|"
+        r"(?:morning|afternoon|evening)|"
+        r"how are you(?: doing)?|how is it going|how['’]s it going|hows it going)"
+        r"(?:\s+good (?:morning|afternoon|evening))?"
+        r"(?:\s+(?:how are you(?: doing)?|how is it going|"
+        r"how['’]s it going|hows it going))?$"
+    )
+    if not greeting_pattern.fullmatch(normalized):
+        return None
+
+    time_greeting = re.search(
+        r"\b(?:good )?(morning|afternoon|evening)\b",
+        normalized,
+    )
+    greeting = time_greeting.group(1).capitalize() if time_greeting else None
+    time_phrase = f" good {greeting.lower()}" if greeting else ""
+    if name:
+        display_name = name[:1].upper() + name[1:]
         return (
-            "Hello! I’m Astra, your friendly weather assistant. I can help you "
-            "check current conditions, forecasts, and typical rainy-season "
-            "patterns for a city or country. What would you like to know?"
+            f"Hey{time_phrase}! How are you? I’m Astra, your weather assistant. "
+            f"How are you, {display_name}?"
         )
-    if normalized in {"good morning", "good afternoon", "good evening"}:
-        greeting = normalized.capitalize()
+    if normalized.startswith("how are you"):
         return (
-            f"{greeting}! I’m Astra, your friendly weather assistant. I can help "
-            "you check current conditions, forecasts, and typical rainy-season "
-            "patterns for a city or country. What would you like to know?"
+            "I’m doing well, thank you for asking! I’m Astra, your weather "
+            "assistant. What city can I help you with?"
         )
-    if normalized in {"how are you", "how are you doing", "how's it going"}:
-        return (
-            "I’m doing well, thank you for asking! I’m Astra, your friendly "
-            "weather assistant. I can help you check current conditions, "
-            "forecasts, and typical rainy-season patterns for a city or country."
-        )
-    return None
+    return (
+        f"Hey{time_phrase}! How are you? I’m Astra, your weather assistant. "
+        "What city’s weather can I help you with?"
+    )
 
 
 WEATHER_TOPIC_PATTERN = re.compile(
-    r"\b(?:weather|forecast|temperature|rain|rainy|rainfall|monsoon|"
-    r"snow|snowfall|wind|humidity|precipitation|storm|sunny|cloudy)\b",
+    r"\b(?:weather|forecast|temperature|rain|rainy|rainfall|drizzle|shower|"
+    r"monsoon|snow|snowy|snowfall|wind|windy|breezy|humidity|precipitation|"
+    r"storm|thunder|sun|sunny|sunshine|clear|cloud|cloudy|clouds|overcast|"
+    r"fog|foggy|mist|misty|hot|warm|heat|heatwave|cold|cool|chilly|freezing)\b",
     re.IGNORECASE,
 )
 QUESTION_START_PATTERN = re.compile(
@@ -173,77 +306,72 @@ def parse_weather_question(question):
         raise WeatherError(WEATHER_LOCATION_NOT_FOUND, status=422)
 
     normalized = re.sub(r"\s+", " ", question).strip().rstrip("?!.,")
-    lowered = normalized.lower()
+    lowered = normalized.casefold().replace("’", "'")
     is_rainy_season = any(
         phrase in lowered
         for phrase in ("rainy season", "monsoon season", "monsoon", "rain season")
     )
-    period = "tomorrow" if re.search(r"\btomorrow\b", lowered) else "today"
-
-    location = normalized
-    location = re.sub(
-        r"^(?:hello|hi|hey)\b[\s,!.]*",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    )
-    location = re.sub(
-        r"^(?:(?:can|could|would)\s+you\s+)?"
-        r"(?:please\s+)?(?:tell\s+me|let\s+me\s+know)\s+",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    )
-    if is_rainy_season:
-        location = re.sub(
-            r"^(?:is there|is|are there|are we in|are we having)\s+",
-            "",
-            location,
-            flags=re.IGNORECASE,
-        )
-        location = re.sub(
-            r"^(?:a\s+)?(?:rainy|rain|monsoon)\s+season"
-            r"(?:\s+going\s+on)?(?:\s+(?:in|for|around))?\s*",
-            "",
-            location,
-            flags=re.IGNORECASE,
-        )
-        location = re.sub(r"^(?:going on|happening)\s+", "", location, flags=re.IGNORECASE)
+    if re.search(r"\bday before yesterday\b", lowered):
+        period = "day_before_yesterday"
+    elif re.search(r"\byesterday\b", lowered):
+        period = "yesterday"
+    elif re.search(r"\bday after tomorrow\b", lowered):
+        period = "day_after_tomorrow"
+    elif re.search(r"\btomorrow\b", lowered):
+        period = "tomorrow"
     else:
-        weather_location = re.search(
-            r"\bweather(?:\s+(?:conditions?|condition))?"
-            r"(?:\s+like)?\s+(?:of|for|in|at|around)\s+(.+)$",
-            location,
-            flags=re.IGNORECASE,
-        )
-        if weather_location:
-            location = weather_location.group(1)
-        else:
-            location = re.sub(
-                r"^(?:what(?:'s| is)|how(?:'s| is)|show me|give me)\s+",
-                "",
-                location,
-                flags=re.IGNORECASE,
-            )
-            location = re.sub(
-                r"^(?:the\s+)?(?:weather|conditions?)\s+",
-                "",
-                location,
-                flags=re.IGNORECASE,
-            )
+        period = "today"
 
-    location = re.sub(r"\b(?:today|tomorrow)\b", "", location, flags=re.IGNORECASE)
+    condition_patterns = {
+        "rain": r"\b(?:rain|rainy|raining|drizzle|showers?|precipitation|wet|monsoon)\b",
+        "cloud": r"\b(?:cloud|cloudy|clouds|overcast)\b",
+        "sun": r"\b(?:sun|sunny|sunshine|clear)\b",
+        "snow": r"\b(?:snow|snowy|sleet)\b",
+        "storm": r"\b(?:storm|stormy|thunder|thunderstorm|lightning)\b",
+        "fog": r"\b(?:fog|foggy|mist|misty)\b",
+        "wind": r"\b(?:wind|windy|breezy|breeze)\b",
+        "hot": r"\b(?:hot|warm|heat|heatwave)\b",
+        "cold": r"\b(?:cold|cool|chilly|freezing)\b",
+    }
+    weather_interest = [
+        condition
+        for condition, pattern in condition_patterns.items()
+        if re.search(pattern, lowered)
+    ]
+
+    location = re.sub(r"\b(?:what|how)'s\b", " ", lowered)
     location = re.sub(
-        r"\b(?:please|right now|currently|today|tomorrow)\b",
-        "",
+        r"\bthe\s+(?=(?:day before|day after)\b|yesterday\b|tomorrow\b|today\b)",
+        " ",
         location,
-        flags=re.IGNORECASE,
     )
+    location = re.sub(r"\bday before yesterday\b|\bday after tomorrow\b", " ", location)
+    location = re.sub(r"\bthe\s+(?=weather|forecast|conditions?\b)", " ", location)
+    location = re.sub(
+        r"\b(?:today|tomorrow|yesterday|now|currently|right now)\b",
+        " ",
+        location,
+    )
+    location = re.sub(
+        "|".join(f"(?:{pattern})" for pattern in condition_patterns.values()),
+        " ",
+        location,
+    )
+    location = re.sub(
+        r"\b(?:what|whats|is|are|weather|forecast|conditions?|condition|season|"
+        r"of|for|in|at|around|on|about|tell|me|please|can|could|would|you|"
+        r"will|be|like|show|give|there|it|going|happening|do|does|how|"
+        r"was|were|and|to|expect|chance|possible|possibility|i|want|need|"
+        r"know|looking|get|if|whether)\b",
+        " ",
+        location,
+    )
+    location = re.sub(r"[^\w\s,'-]", " ", location, flags=re.UNICODE)
     location = re.sub(r"\s+", " ", location).strip(" ,?.!")
     if not location:
         raise WeatherError(
-            "I couldn't identify a city. Try asking, “What is the weather in Noida today?”",
-            status=400,
+            WEATHER_LOCATION_NOT_FOUND,
+            status=422,
         )
     if len(location) > 100:
         raise WeatherError("Enter a city name (up to 100 characters).", status=400)
@@ -253,6 +381,7 @@ def parse_weather_question(question):
         "period": period,
         "is_rainy_season": is_rainy_season,
         "question": normalized,
+        "weather_interest": weather_interest,
     }
 
 
@@ -271,6 +400,8 @@ def fetch_rainy_season_context(latitude, longitude, month):
         f"{ARCHIVE_URL}?{archive_query}",
         timeout=45,
         service="Historical weather service",
+        cache_key=make_cache_key("historical", archive_query),
+        cache_ttl=HISTORICAL_CACHE_TTL,
     )
     daily = archive.get("daily") or {}
     dates = daily.get("time") or []
@@ -310,6 +441,62 @@ def fetch_rainy_season_context(latitude, longitude, month):
     }
 
 
+def fetch_yesterday_weather(location, parsed, yesterday):
+    archive_query = urllib.parse.urlencode(
+        {
+            "latitude": location["latitude"],
+            "longitude": location["longitude"],
+            "start_date": yesterday.isoformat(),
+            "end_date": yesterday.isoformat(),
+            "daily": (
+                "weather_code,temperature_2m_mean,temperature_2m_max,"
+                "temperature_2m_min,apparent_temperature_mean,"
+                "relative_humidity_2m_mean,wind_speed_10m_max,precipitation_sum"
+            ),
+            "timezone": "auto",
+        }
+    )
+    archive = request_json(
+        f"{ARCHIVE_URL}?{archive_query}",
+        timeout=45,
+        service="Historical weather service",
+        cache_key=make_cache_key("weather-yesterday", archive_query),
+        cache_ttl=YESTERDAY_CACHE_TTL,
+    )
+    daily = archive.get("daily") or {}
+    dates = daily.get("time") or []
+    if not dates or not daily.get("weather_code"):
+        raise WeatherError("Historical weather is not available for that date.")
+
+    weather = {
+        "location": location["display_name"],
+        "location_note": location.get("note"),
+        "question": parsed["question"],
+        "period": parsed["period"],
+        "period_date": dates[0],
+        "local_time": "",
+        "weather_code": daily["weather_code"][0],
+        "condition": weather_description(daily["weather_code"][0]),
+        "temperature_c": (daily.get("temperature_2m_mean") or [None])[0],
+        "feels_like_c": (daily.get("apparent_temperature_mean") or [None])[0],
+        "humidity_percent": (daily.get("relative_humidity_2m_mean") or [None])[0],
+        "wind_kmh": (daily.get("wind_speed_10m_max") or [None])[0],
+        "today_high_c": (daily.get("temperature_2m_max") or [None])[0],
+        "today_low_c": (daily.get("temperature_2m_min") or [None])[0],
+        "precipitation_mm": (daily.get("precipitation_sum") or [None])[0],
+        "precipitation_probability_percent": None,
+        "weather_interest": parsed["weather_interest"],
+        "rainy_season": None,
+    }
+    if parsed["is_rainy_season"]:
+        weather["rainy_season"] = fetch_rainy_season_context(
+            location["latitude"],
+            location["longitude"],
+            yesterday.month,
+        )
+    return weather
+
+
 def fetch_weather(query):
     parsed = parse_weather_question(query)
     city = parsed["location"]
@@ -340,7 +527,11 @@ def fetch_weather(query):
         geocoding_query = urllib.parse.urlencode(
             {"name": city, "count": 10, "language": "en", "format": "json"}
         )
-        location_data = request_json(f"{GEOCODING_URL}?{geocoding_query}")
+        location_data = request_json(
+            f"{GEOCODING_URL}?{geocoding_query}",
+            cache_key=make_cache_key("geocoding", normalize_place_name(city)),
+            cache_ttl=GEOCODING_CACHE_TTL,
+        )
         locations = location_data.get("results", [])
         normalized_city = normalize_place_name(city)
         exact_matches = [
@@ -384,64 +575,86 @@ def fetch_weather(query):
                 "precipitation,weather_code,wind_speed_10m"
             ),
             "timezone": "auto",
-            "forecast_days": 2,
+            "forecast_days": 3,
             "daily": (
                 "weather_code,temperature_2m_max,temperature_2m_min,"
                 "precipitation_sum,precipitation_probability_max"
             ),
         }
     )
-    forecast = request_json(f"{FORECAST_URL}?{forecast_query}")
+    forecast_url = f"{FORECAST_URL}?{forecast_query}"
+    forecast = request_json(
+        forecast_url,
+        cache_key=make_cache_key("forecast", forecast_query),
+        cache_ttl=FORECAST_CACHE_TTL,
+    )
     current = forecast.get("current")
     daily = forecast.get("daily")
     if not current or not daily:
         raise WeatherError("The weather service returned incomplete data.")
+    if not current.get("time"):
+        raise WeatherError("The weather service returned an invalid local time.")
 
     place_parts = [location["name"]]
     if location.get("admin1") and location["admin1"] != location["name"]:
         place_parts.append(location["admin1"])
     if location.get("country"):
         place_parts.append(location["country"])
+    location["display_name"] = ", ".join(place_parts)
 
-    day_index = 1 if parsed["period"] == "tomorrow" else 0
+    local_now = datetime.datetime.fromisoformat(current["time"])
+    if parsed["period"] in {"yesterday", "day_before_yesterday"}:
+        days_ago = 2 if parsed["period"] == "day_before_yesterday" else 1
+        return fetch_yesterday_weather(
+            location,
+            parsed,
+            local_now.date() - datetime.timedelta(days=days_ago),
+        )
+
+    day_index = {
+        "tomorrow": 1,
+        "day_after_tomorrow": 2,
+    }.get(parsed["period"], 0)
     daily_dates = daily.get("time") or []
     if day_index >= len(daily_dates):
         raise WeatherError("The forecast service returned incomplete daily data.")
-    is_tomorrow = parsed["period"] == "tomorrow"
+    is_future = parsed["period"] in {"tomorrow", "day_after_tomorrow"}
     requested_code = (
-        (daily.get("weather_code") or [None, None])[day_index]
-        if is_tomorrow
+        (daily.get("weather_code") or [None, None, None])[day_index]
+        if is_future
         else current.get("weather_code")
     )
     weather = {
-        "location": ", ".join(place_parts),
+        "location": location["display_name"],
         "location_note": location.get("note"),
         "question": parsed["question"],
         "period": parsed["period"],
+        "weather_interest": parsed["weather_interest"],
         "period_date": daily_dates[day_index],
         "local_time": current.get("time", ""),
+        "weather_code": requested_code,
         "condition": weather_description(requested_code),
         "temperature_c": (
-            (daily.get("temperature_2m_max") or [None, None])[day_index]
-            if is_tomorrow
+            (daily.get("temperature_2m_max") or [None, None, None])[day_index]
+            if is_future
             else current.get("temperature_2m")
         ),
         "feels_like_c": (
-            None if is_tomorrow else current.get("apparent_temperature")
+            None if is_future else current.get("apparent_temperature")
         ),
         "humidity_percent": (
-            None if is_tomorrow else current.get("relative_humidity_2m")
+            None if is_future else current.get("relative_humidity_2m")
         ),
-        "wind_kmh": None if is_tomorrow else current.get("wind_speed_10m"),
-        "today_high_c": (daily.get("temperature_2m_max") or [None, None])[day_index],
-        "today_low_c": (daily.get("temperature_2m_min") or [None, None])[day_index],
+        "wind_kmh": None if is_future else current.get("wind_speed_10m"),
+        "today_high_c": (daily.get("temperature_2m_max") or [None, None, None])[day_index],
+        "today_low_c": (daily.get("temperature_2m_min") or [None, None, None])[day_index],
         "precipitation_mm": (
-            (daily.get("precipitation_sum") or [None, None])[day_index]
-            if is_tomorrow
+            (daily.get("precipitation_sum") or [None, None, None])[day_index]
+            if is_future
             else current.get("precipitation")
         ),
         "precipitation_probability_percent": (
-            daily.get("precipitation_probability_max") or [None, None]
+            daily.get("precipitation_probability_max") or [None, None, None]
         )[day_index],
         "rainy_season": None,
     }
@@ -496,9 +709,14 @@ def create_weather_report(weather):
                     "such as 'What is the weather for Noida today?', 'How is the "
                     "weather in Lisbon tomorrow?', or 'Is rainy season going on in "
                     "Kerala?'. Answer using only the supplied verified weather and "
-                    "historical-rainfall data. For today, describe current conditions "
-                    "and today's high/low. For tomorrow, describe the forecast high/"
-                    "low, condition and precipitation chance. For rainy-season "
+                    "historical-rainfall data. Respect the requested date and weather "
+                    "type when supplied; say whether the verified conditions match "
+                    "the requested rain, cloud, sun, snow, storm, fog, wind, hot, or "
+                    "cold type. "
+                    "For today, describe current conditions and today's high/low. "
+                    "For future dates, describe the forecast high/low, condition and "
+                    "precipitation chance. For yesterday, describe observed historical "
+                    "conditions. For rainy-season "
                     "questions, explain whether the month is typically in the wetter "
                     "season based on the historical data, and distinguish that "
                     "climatological pattern from today's or tomorrow's forecast. "
@@ -545,6 +763,32 @@ def create_weather_report(weather):
     return create_fallback_report(weather)
 
 
+def create_cached_weather_report(weather):
+    report_weather = {key: value for key, value in weather.items() if key != "question"}
+    cache_material = json.dumps(
+        {
+            "model": os.getenv("OPENROUTER_MODEL", "openrouter/free"),
+            "prompt_version": 2,
+            "weather": report_weather,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    cache_key = make_cache_key("report", cache_material)
+    cached_report = get_cached_json(cache_key)
+    if isinstance(cached_report, str):
+        return cached_report, "HIT"
+
+    try:
+        report = create_weather_report(weather)
+    except WeatherError as error:
+        logger.warning("AI weather report unavailable; using data-based report: %s", error)
+        return create_fallback_report(weather), "BYPASS"
+
+    set_cached_json(cache_key, report, REPORT_CACHE_TTL)
+    return report, "MISS"
+
+
 def clean_weather_report(content):
     analysis_heading = re.compile(
         r"(?im)^\s*(?:\d+[.)]\s*)?(?:\*\*)?"
@@ -589,8 +833,18 @@ def create_fallback_report(weather):
         return f"{seasonal_answer} Current conditions are {condition}.{high_low}"
 
     period = weather.get("period", "today")
-    period_label = "tomorrow" if period == "tomorrow" else "today"
-    report = f"{period.capitalize()} in {location}, the forecast is {condition}."
+    period_labels = {
+        "day_before_yesterday": "the day before yesterday",
+        "yesterday": "yesterday",
+        "today": "today",
+        "tomorrow": "tomorrow",
+        "day_after_tomorrow": "the day after tomorrow",
+    }
+    period_label = period_labels.get(period, "today")
+    if period in {"yesterday", "day_before_yesterday"}:
+        report = f"{period_label.capitalize()} in {location}, conditions were {condition}."
+    else:
+        report = f"{period_label.capitalize()} in {location}, the forecast is {condition}."
     if high is not None and low is not None:
         report += f" The high is {round(high)}°C and the low is {round(low)}°C."
     elif high is not None:
@@ -600,8 +854,51 @@ def create_fallback_report(weather):
             " The chance of precipitation is "
             f"{weather['precipitation_probability_percent']}%."
         )
-    elif period_label == "today" and weather.get("temperature_c") is not None:
+    elif period == "today" and weather.get("temperature_c") is not None:
         report += f" It is {round(weather['temperature_c'])}°C right now."
+    interests = weather.get("weather_interest") or []
+    if interests:
+        condition_codes = {
+            "rain": {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82},
+            "cloud": {2, 3},
+            "sun": {0, 1},
+            "snow": {71, 73, 75, 77, 85, 86},
+            "storm": {95, 96, 99},
+            "fog": {45, 48},
+        }
+        statements = []
+        for interest in interests:
+            if interest in condition_codes:
+                weather_code = weather.get("weather_code")
+                if weather_code is None:
+                    continue
+                matches = weather_code in condition_codes[interest]
+            elif interest == "wind":
+                wind_speed = weather.get("wind_kmh")
+                if wind_speed is None:
+                    continue
+                matches = wind_speed >= 25
+            else:
+                temperature = weather.get("temperature_c")
+                if temperature is None:
+                    continue
+                matches = temperature >= 30 if interest == "hot" else temperature <= 10
+            expected = {
+                "rain": "rain",
+                "cloud": "cloudy weather",
+                "sun": "sunny weather",
+                "snow": "snow",
+                "storm": "stormy weather",
+                "fog": "fog",
+                "wind": "windy conditions",
+                "hot": "hot weather",
+                "cold": "cold weather",
+            }[interest]
+            statements.append(
+                f"{expected.capitalize()} {'is' if matches else 'is not'} expected"
+            )
+        if statements:
+            report += f" {'; '.join(statements)}."
     return report
 
 
@@ -731,28 +1028,102 @@ def javascript():
 @app.post("/api/weather")
 def weather_endpoint(request: WeatherRequest):
     query = request.query or request.city or ""
+    error_key = make_cache_key("error", normalize_place_name(query))
+    cached_error = get_cached_json(error_key)
+    if isinstance(cached_error, dict) and cached_error.get("status") in {400, 422}:
+        raise WeatherError(cached_error["detail"], status=cached_error["status"])
+
     greeting = greeting_response(query)
     if greeting:
         return {"type": "greeting", "message": greeting}
     if is_unrelated_question(query):
-        raise WeatherError(
+        message = (
             "I can only help with weather questions. Try asking about the weather "
-            "in a city.",
-            status=422,
+            "in a city."
         )
+        set_cached_json(
+            error_key,
+            {"detail": message, "status": 422},
+            ERROR_CACHE_TTL,
+        )
+        raise WeatherError(message, status=422)
 
-    weather = fetch_weather(query)
-    report = create_fallback_report(weather)
-    return {"weather": weather, "report": report}
+    try:
+        weather = fetch_weather(query)
+    except WeatherError as error:
+        if error.status in {400, 422}:
+            set_cached_json(
+                error_key,
+                {"detail": str(error), "status": error.status},
+                ERROR_CACHE_TTL,
+            )
+        raise
+
+    report, cache_status = create_cached_weather_report(weather)
+    return JSONResponse(
+        content={"weather": weather, "report": report},
+        headers={"X-Report-Cache": cache_status},
+    )
+
+
+@app.post("/api/greeting")
+def greeting_endpoint(request: WeatherRequest):
+    query = request.query or request.city or ""
+    greeting = greeting_response(query)
+    if not greeting:
+        raise WeatherError("Enter a greeting such as “Hello” or “Good morning.”", status=400)
+
+    cache_key = make_cache_key("greeting", greeting)
+    cached_greeting = get_cached_json(cache_key)
+    if isinstance(cached_greeting, str):
+        greeting = cached_greeting
+        cache_status = "HIT"
+    else:
+        set_cached_json(cache_key, greeting, GREETING_CACHE_TTL)
+        cache_status = "MISS"
+    return JSONResponse(
+        content={"type": "greeting", "message": greeting},
+        headers={"X-Response-Cache": cache_status},
+    )
 
 
 @app.post("/api/speech")
 def speech_endpoint(request: SpeechRequest):
-    audio, media_type = create_speech(request.text)
+    model = os.getenv(
+        "OPENROUTER_TTS_MODEL",
+        "heygen/heygen-voice-1-turbo:free",
+    )
+    voice = os.getenv("OPENROUTER_TTS_VOICE")
+    if not voice and model.startswith("heygen/"):
+        voice = "nadine"
+    cache_key = make_cache_key(
+        "speech",
+        json.dumps(
+            {
+                "model": model,
+                "voice": voice,
+                "format": "pcm",
+                "text": request.text,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        ),
+    )
+    cached_speech = get_cached_speech(cache_key)
+    if cached_speech is not None:
+        audio, media_type = cached_speech
+        cache_status = "HIT"
+    else:
+        audio, media_type = create_speech(request.text)
+        set_cached_speech(cache_key, audio, media_type, SPEECH_CACHE_TTL)
+        cache_status = "MISS"
     return Response(
         content=audio,
         media_type=media_type,
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "X-Speech-Cache": cache_status,
+        },
     )
 
 
