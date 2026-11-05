@@ -14,10 +14,17 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Open <http://127.0.0.1:8000> in your browser. The FastAPI server is defined in
-[`main.py`](./main.py). It reads the repository-root `.env` file when it starts.
-The OpenRouter key should be set as `OPEN_ROUTER=...`. The LLM model,
-speech model, voice, host, and port can also be configured there.
+Open <http://127.0.0.1:8000> in your browser. [`main.py`](./main.py) remains the
+server entry point; the FastAPI app and backend services live in the
+[`weather_bot`](./weather_bot) package. Configuration reads the repository-root
+`.env` file at startup. The OpenRouter key should be set as `OPEN_ROUTER=...`.
+The LLM model, speech model, voice, host, and port can also be configured there.
+
+The backend is organized by responsibility: `config.py` holds settings,
+`cache.py` handles Redis, `clients.py` makes external JSON requests,
+`weather.py` parses questions and fetches weather data, `reports.py` builds
+weather reports, `speech.py` generates audio, and `routes.py` defines HTTP
+endpoints. `app.py` assembles the FastAPI application.
 
 The browser page consists of:
 
@@ -60,9 +67,11 @@ are made by the backend, so the OpenRouter key stays on the server.
 
 ### Step 2: FastAPI validates the request
 
-The `/api/weather` endpoint in [`main.py`](./main.py) validates the JSON using
-the `WeatherRequest` Pydantic model. It accepts a natural-language `query`; the
-older `city` field is also still accepted for compatibility.
+The `/api/weather` endpoint in
+[`weather_bot/routes.py`](./weather_bot/routes.py) validates JSON using the
+`WeatherRequest` model in [`weather_bot/schemas.py`](./weather_bot/schemas.py).
+It accepts a natural-language `query`; the older `city` field is also still
+accepted for compatibility.
 
 Invalid or missing input is rejected with a validation response (usually HTTP
 422). The endpoint then calls `fetch_weather(query)`.
