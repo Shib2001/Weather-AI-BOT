@@ -43,25 +43,23 @@ def javascript():
 @router.post("/api/weather")
 def weather_endpoint(request: WeatherRequest):
     query = request.query or request.city or ""
-    error_key = make_cache_key("error", normalize_place_name(query))
-    cached_error = get_cached_json(error_key)
-    if isinstance(cached_error, dict) and cached_error.get("status") in {400, 422}:
-        raise WeatherError(cached_error["detail"], status=cached_error["status"])
-
     greeting = greeting_response(query)
     if greeting:
         return {"type": "greeting", "message": greeting}
     if is_unrelated_question(query):
-        message = (
-            "I can only help with weather questions. Try asking about the weather "
-            "in a city."
-        )
-        set_cached_json(
-            error_key,
-            {"detail": message, "status": 422},
-            ERROR_CACHE_TTL,
-        )
-        raise WeatherError(message, status=422)
+        return {
+            "type": "unrelated",
+            "message": (
+                f"Sorry, I can't help with the answer to \"{query}\". "
+                "I am Astra, a weather AI assistant. If you want to know the weather "
+                "in your city, please let me know."
+            ),
+        }
+
+    error_key = make_cache_key("error", normalize_place_name(query))
+    cached_error = get_cached_json(error_key)
+    if isinstance(cached_error, dict) and cached_error.get("status") in {400, 422}:
+        raise WeatherError(cached_error["detail"], status=cached_error["status"])
 
     try:
         weather = fetch_weather(query)
@@ -138,4 +136,3 @@ def speech_endpoint(request: SpeechRequest):
             "X-Speech-Cache": cache_status,
         },
     )
-

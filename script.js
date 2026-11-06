@@ -4,6 +4,7 @@ const searchButton = document.querySelector("#search-button");
 const listenButton = document.querySelector("#listen-button");
 const messageArea = document.querySelector("#message-area");
 const statusMessage = document.querySelector("#status-message");
+const staticStatusMessage = statusMessage.textContent;
 const messageAudioButton = document.querySelector("#message-audio-button");
 const weatherPanel = document.querySelector("#weather-panel");
 const cityFacts = document.querySelector("#city-facts");
@@ -34,6 +35,7 @@ let latestReport = "";
 let latestWeather = null;
 let latestMessage = "";
 let latestMessageIsGreeting = false;
+let latestMessageKeepsStaticPage = false;
 let recognition = null;
 let reportAudio = null;
 let reportAudioUrl = null;
@@ -321,6 +323,7 @@ function showResponse(message, state = "") {
   stopCurrentSpeech();
   latestMessage = message;
   latestMessageIsGreeting = false;
+  latestMessageKeepsStaticPage = false;
   messageArea.classList.add("is-response");
   messageArea.classList.remove("is-greeting");
   messageAudioButton.hidden = false;
@@ -335,6 +338,7 @@ function showGreetingResponse(message) {
   stopCurrentSpeech();
   latestMessage = message;
   latestMessageIsGreeting = true;
+  latestMessageKeepsStaticPage = false;
   messageArea.classList.remove("is-response");
   messageArea.classList.add("is-greeting");
   messageAudioButton.hidden = false;
@@ -384,8 +388,23 @@ function stopCurrentSpeech(stopWelcome = true) {
   }
 }
 
-async function playResponseVoice(message, isGreeting = false) {
-  const retryLabel = isGreeting ? "Hear greeting" : "Hear message";
+function showStaticVoiceResponse(message) {
+  stopCurrentSpeech();
+  latestMessage = message;
+  latestMessageIsGreeting = false;
+  latestMessageKeepsStaticPage = true;
+  messageArea.classList.remove("is-response", "is-greeting");
+  messageAudioButton.hidden = false;
+  messageAudioButton.textContent = "Hear Astra’s response";
+  cityFacts.hidden = false;
+  weatherPanel.hidden = true;
+  showStatus(staticStatusMessage);
+}
+
+async function playResponseVoice(message, isGreeting = false, keepStaticPage = false) {
+  const retryLabel = isGreeting
+    ? "Hear greeting"
+    : keepStaticPage ? "Hear Astra’s response" : "Hear message";
   let audio = reportAudio;
   if (!audio) {
     messageAudioButton.disabled = true;
@@ -420,7 +439,9 @@ async function playResponseVoice(message, isGreeting = false) {
         resetAudio();
         const voiceError = isGreeting
           ? "Astra’s greeting voice could not be played. Select “Try greeting again” to retry."
-          : `${message} Astra’s voice could not be played. Select “Try voice again” to retry.`;
+          : keepStaticPage
+            ? "Astra’s voice could not be played. Select “Hear Astra’s response” to retry."
+            : `${message} Astra’s voice could not be played. Select “Try voice again” to retry.`;
         if (isGreeting) showGreetingVoiceError(voiceError);
         else showStatus(voiceError, "error");
       }, { once: true });
@@ -430,7 +451,9 @@ async function playResponseVoice(message, isGreeting = false) {
       const reason = error instanceof Error ? error.message : "Unknown speech error.";
       const voiceError = isGreeting
         ? `Astra’s greeting voice could not be prepared: ${reason} Select “Try greeting again” to retry.`
-        : `${message} Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`;
+        : keepStaticPage
+          ? `Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`
+          : `${message} Astra’s voice could not be prepared: ${reason} Select “Try voice again” to retry.`;
       if (isGreeting) showGreetingVoiceError(voiceError);
       else showStatus(voiceError, "error");
       return;
@@ -440,7 +463,7 @@ async function playResponseVoice(message, isGreeting = false) {
   try {
     messageAudioButton.disabled = false;
     messageAudioButton.textContent = isGreeting ? "Play greeting" : "Play with Astra’s voice";
-    if (!isGreeting) showStatus(message);
+    if (!isGreeting && !keepStaticPage) showStatus(message);
     await audio.play();
     messageAudioButton.textContent = isGreeting ? "Playing greeting…" : "Speaking…";
   } catch {
@@ -450,7 +473,9 @@ async function playResponseVoice(message, isGreeting = false) {
       : isGreeting ? "Try greeting again" : "Try voice again";
     const playbackError = isGreeting
       ? `Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s greeting.`
-      : `${message} Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`;
+      : keepStaticPage
+        ? `Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`
+        : `${message} Audio playback was blocked. Select “${messageAudioButton.textContent}” to hear Astra’s voice.`;
     if (isGreeting) showGreetingVoiceError(playbackError);
     else showStatus(playbackError, "error");
     if (reportAudio !== audio && reportAudioUrl) {
@@ -588,6 +613,7 @@ form.addEventListener("submit", async (event) => {
   latestMessageIsGreeting = false;
   messageArea.classList.remove("is-response");
   messageArea.classList.remove("is-greeting");
+  latestMessageKeepsStaticPage = false;
   messageAudioButton.hidden = true;
   weatherPanel.hidden = true;
   cityFacts.hidden = false;
@@ -622,6 +648,11 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify({ query: city }),
     });
     const data = await response.json();
+    if (response.ok && data.type === "unrelated") {
+      showStaticVoiceResponse(data.message);
+      void playResponseVoice(data.message, false, true);
+      return;
+    }
     if (!response.ok) {
       throw new Error(data.detail || data.error || "Could not load weather. Please try again.");
     }
@@ -641,7 +672,11 @@ form.addEventListener("submit", async (event) => {
 
 messageAudioButton.addEventListener("click", () => {
   if (latestMessage) {
-    void playResponseVoice(latestMessage, latestMessageIsGreeting);
+    void playResponseVoice(
+      latestMessage,
+      latestMessageIsGreeting,
+      latestMessageKeepsStaticPage,
+    );
   }
 });
 
